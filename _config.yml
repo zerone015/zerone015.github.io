@@ -14,7 +14,7 @@ timezone: Asia/Seoul
 # jekyll-seo-tag settings › https://github.com/jekyll/jekyll-seo-tag/blob/master/docs/usage.md
 # ↓ --------------------------
 
-title: ywson # the main title
+title: yoson # the main title
 
 tagline: Notes from Kernel Space # it will display as the subtitle
 
@@ -33,7 +33,7 @@ github:
 social:
   # Change to your full name.
   # It will be displayed as the default author of the posts and the copyright owner in the Footer
-  name: ywson
+  name: yoson
   email: zerone015@naver.com # change to your email address
   links: 
     # The first element serves as the copyright owner's link
