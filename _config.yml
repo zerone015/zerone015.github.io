@@ -16,7 +16,7 @@ timezone: Asia/Seoul
 
 title: ywson # the main title
 
-tagline: "" # it will display as the subtitle
+tagline: Notes from Kernel Space # it will display as the subtitle
 
 description: ""
 
