@@ -14,11 +14,11 @@ timezone: Asia/Seoul
 # jekyll-seo-tag settings › https://github.com/jekyll/jekyll-seo-tag/blob/master/docs/usage.md
 # ↓ --------------------------
 
-title: Notes from Kernel Space # the main title
+title: ywson # the main title
 
 tagline: "" # it will display as the subtitle
 
-description: ""
+description: Notes from Kernel Space
 
 # Fill in the protocol & hostname for your site.
 # E.g. 'https://username.github.io', note that it does not end with a '/'.
