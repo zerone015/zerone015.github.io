@@ -2,7 +2,7 @@
 title: "Parallel Processors"
 date: 2026-02-10 07:00:00 +0900
 categories: [CS]
-tags: [parallel, amdahl, simd, multithreading]
+tags: [parallel, amdahl, simd, multithreading, numa, cluster]
 math: true
 ---
 
