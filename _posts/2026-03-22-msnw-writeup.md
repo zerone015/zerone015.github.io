@@ -5,7 +5,7 @@ categories: [Wargame, Dreamhack]
 tags: [pwn, sfp_overwrite, stack_leak, dreamhack]
 ---
 
-`Nyang()`의 초기화되지 않은 버퍼를 이용해 SFP를 유출하고, `Meong()`의 2바이트 SFP 덮어쓰기로 `Win()`을 실행하는 문제다.
+SFP를 덮어써서 실행 흐름을 제어하는 유형의 문제다.
 
 ## Analysis
 
@@ -21,7 +21,7 @@ IBT:        Enabled
 Stripped:   No
 ```
 
-카나리가 없고 PIE도 꺼져 있다. NX는 활성화되어 있으므로 셸코드를 직접 실행하는 방식은 불가능하지만, 바이너리 내에 `Win()` 함수가 존재하므로 해당 주소로 리턴할 수 있다.
+카나리가 없고 PIE도 꺼져 있다.
 
 ### Source Code
 ```c
