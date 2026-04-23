@@ -128,7 +128,7 @@ int __fastcall main(int argc, const char **argv, const char **envp)
 
 코드를 살펴보면 첫 입력에 `"Decision2Solve"`를 입력하면 1회 한정으로 임의의 주소에 6바이트를 쓸 수 있는 기회가 주어진다. 또한 `safe`, `unsafe`가 함수 포인터이고 각각 `safe_func`, `unsafe_func`로 초기화된 것을 확인할 수 있다. `unsafe_func`에는 스택 BOF 취약점이 존재한다.
 
-이 바이너리에는 `get_shell` 같은 함수가 없으므로 쉘을 얻기 위해 우선 libc base를 유출해야 한다. libc를 유출하는 방법으로는 `main`의 ret에 있는 `__libc_start_call_main`을 유출하거나, No PIE이므로 주소가 이미 해결된 GOT 엔트리를 출력하는 방법을 쓸 수 있다. `unsafe_func`에 BOF 취약점이 존재하고 `print_menu`에서 `puts`를 사용하고 있으니, `puts@plt`를 이용해 ROP으로 libc base를 유출한 후 ret2main하고, 구한 libc base를 통해 쉘을 획득하도록 다시 ROP을 구성하면 된다. 이를 위해 바이너리에 `rdi` 가젯이 있어야 한다.
+이 바이너리에는 `get_shell` 같은 함수가 없으므로 쉘을 얻기 위해 우선 libc base를 유출해야 한다. libc를 유출하는 방법으로는 `main`의 ret에 있는 `__libc_start_call_main`을 유출하거나, No PIE이므로 GOT 엔트리를 출력하는 방법을 쓸 수 있다. `unsafe_func`에 BOF 취약점이 존재하고 `print_menu`에서 `puts`를 사용하고 있으니, `puts@plt`를 이용해 ROP으로 libc base를 유출한 후 ret2main하고, 구한 libc base를 통해 쉘을 획득하도록 다시 ROP을 구성하면 된다. 이를 위해 바이너리에 `rdi` 가젯이 있어야 한다.
 
 ```
 root@a237909c5b9c:/pwn/sea_of_stack# ROPgadget --binary prob --re "pop rdi"
