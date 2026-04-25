@@ -325,9 +325,20 @@ Bunker* newBunker(long hp)
 }
 ```
 
-`Bunker`와 `Hatchery` 모두 생성될 때 8바이트 멤버 변수인 `type`을 초기화하지 않는다. 따라서 `Hatchery`의 `type` 위치에 `"22222\x00"`을 미리 써 두고, 그 주소를 `Bunker`의 `type`에 써 두면, 이후 `BuildHatchery`를 호출했을 때 플래그를 획득할 수 있다.
+`Bunker`와 `Hatchery` 모두 생성될 때 8바이트 멤버 변수인 `type`을 초기화하지 않는다. 따라서 `Hatchery`의 `type` 위치에 `"22222"`을 미리 써 두고, 그 주소를 `Bunker`의 `type`에 써 두면, 이후 `BuildHatchery`를 호출했을 때 플래그를 획득할 수 있다.
 
-페이로드를 한 번의 `scanf` 호출 시 전체를 전송하는 방식으로 구성할 수 있다. `scanf` 내부에서 `read` 시스템 콜을 할 때 변경한 `size`만큼 버퍼링 버퍼에 읽어 들이기 때문에, `scanf`가 호출되는 순간 페이로드 전체가 `buffer`와 top chunk에 세팅된다. `Hatchery`에 할당될 주소는 `buffer` 주소 + 1064이다. `buffer`가 1024바이트이고 `Bunker`, `Hatchery` 구조체가 모두 64바이트 청크이므로, 이 크기 정보로 `type` 멤버 변수 및 top chunk의 `size` 필드 오프셋을 계산하여 페이로드를 구성하면 된다.
+문제는 `type`에 어떻게 값을 쓰느냐인데, `setvbuf`로 변경된 `size`를 적용하고 나면 `scanf`가 호출되는 시점에 페이로드 전체를 한 번에 밀어넣을 수 있다. `scanf` 내부에서 `read` 시스템 콜이 발생할 때 변경된 `size`만큼 버퍼링 버퍼에 읽어 들인 후, 그 버퍼에서 포맷 스트링에 따라 필요한 만큼 읽기 때문에 `scanf`가 호출되는 순간 페이로드 전체가 `buffer`와 top chunk에 세팅된다. 페이로드를 올바르게 구성하려면 각 멤버의 오프셋을 미리 계산해두어야 한다.
+
+**top chunk `size` 필드 (`buffer` 기준 +1032)**  
+`buffer`(1024) + `prev_size`(8) = 1032
+
+**`Hatchery`의 `type` 멤버 (`buffer` 기준 +1064)**  
+`buffer`(1024) + top chunk 헤더(16) + `name`(16) + `HP`(8) = 1064
+
+**`Bunker`의 `type` 멤버 (`Hatchery`의 `type` 기준 +56)**  
+`Hatchery` 구조체 내 `type` 이후 잔여(16) + top chunk 헤더(16) + `name`(16) + `HP`(8) = 56
+
+이 오프셋을 바탕으로 top chunk의 `size` 필드, `Hatchery`와 `Bunker`의 `type` 멤버에 원하는 값을 배치하는 방식으로 페이로드를 구성하면 된다.
 
 한 가지 주의할 점으로, `malloc`은 top chunk에서 분할하여 할당할 때 top chunk의 `size`를 검사한다.
 
