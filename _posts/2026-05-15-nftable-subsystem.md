@@ -2,12 +2,12 @@
 title: "(임시)nftable subsystem"
 date: 2026-05-15 01:00:00 +0900
 categories: [Linux Kernel]
-tags: [nftable, netlink]
+tags: [netlink, nfnetlink, nftable]
 ---
 
 드림핵에서 리눅스 커널 해킹 패스를 수강하면서 CVE-2022-34918 관련 강의를 보는데, nftable 서브시스템에 대한 기반 지식이 부족해서 제대로 이해하기 어려웠습니다. 그래서 CVE-2022-34918을 본격적으로 분석하기에 앞서 nftable에 대해 먼저 정리하고자 합니다.
 
-이 글에서 다루는 범위는 유저 공간 프로그램에서 nftable에 접근하기 위해 netlink API를 사용하는 방법부터 커널 내부 구조와 동작까지입니다. `nft` 명령어 사용법은 다루지 않으며, 이는 리눅스 메뉴얼 페이지에서 확인할 수 있습니다.
+이 글에서 다루는 범위는 유저 공간 프로그램에서 nftable에 접근하기 위해 netlink API를 사용하는 방법부터 커널 내부 흐름까지입니다. `nft` 명령어 사용법은 다루지 않으며, 이는 리눅스 매뉴얼 페이지에서 확인할 수 있습니다.
 
 ## netlink
 
@@ -480,7 +480,7 @@ struct user_msghdr {
 };
 ```
 
-유저 공간의 `msg_iov`, `msg_iovlen`이 커널 내부에서는 `msg_iter`로 통합되었습니다. 또한 커널 내부 전용 제어 정보를 위한 필드와 비동기 요청에서 사용되는 `msg_iocb` 필드가 추가되었습니다. 이제 `__copy_msghdr_from_user`를 살펴보겠습니다.
+유저 공간의 `msg_iov`, `msg_iovlen`이 커널 내부에서는 `msg_iter`로 통합되었습니다. 또한 커널 내부 전용 보조 데이터를 위한 필드와 비동기 요청에서 사용되는 `msg_iocb` 필드가 추가되었습니다. 이제 `__copy_msghdr_from_user`를 살펴보겠습니다.
 
 ```c
 int __copy_msghdr_from_user(struct msghdr *kmsg,
@@ -867,9 +867,9 @@ out:
 }
 ```
 
-(0)에서 `MSG_OOB`(긴급 패킷) 플래그는 netlink에서 지원되지 않으므로 거부합니다. 이후 길이를 검사하고 (1)에서 `scm_send`가 호출됩니다. 이 함수는 `struct scm_cookie`를 설정하는 데 사용되며, 소켓 계층에서 자격 증명, 보안, 제어 정보 처리를 위해 쓰입니다.
+(0)에서 `MSG_OOB`(긴급 패킷) 플래그는 netlink에서 지원되지 않으므로 거부합니다. 이후 길이를 검사하고 (1)에서 `scm_send`가 호출됩니다. 이 함수는 `struct scm_cookie`를 설정하는 데 사용되며, 소켓 계층에서 자격 증명, 보안, 보조 데이터 처리를 위해 쓰입니다.
 
-(2)에서 유효성을 확인하고 이후 전송을 위해 `portid`와 `group`을 저장합니다. (3)은 유저 공간에서 `bind` 없이 곧바로 메시지를 전송한 경우, 커널이 자동으로 바인드해주는 처리입니다. 메뉴얼에는 `pid`를 0으로 설정하고 `bind`를 호출하면 자동 바인드된다고 되어 있지만, 코드를 보면 `bind` 호출 자체를 생략해도 자동으로 처리됩니다. 따라서 전송만 할 목적이라면 `bind`를 생략하여 시스템 콜을 1회 줄일 수 있습니다.
+(2)에서 유효성을 확인하고 이후 전송을 위해 `portid`와 `group`을 저장합니다. (3)은 유저 공간에서 `bind` 없이 곧바로 메시지를 전송한 경우 커널이 자동으로 바인드해주는 처리입니다. 매뉴얼에는 `pid`를 0으로 설정하고 `bind`를 호출하면 자동 바인드된다고 되어 있지만, 코드를 보면 `bind` 호출 자체를 생략해도 자동으로 처리됩니다. 따라서 전송만 할 목적이라면 `bind`를 생략하여 시스템 콜을 1회 줄일 수 있습니다.
 
 (4)에서 메시지를 담을 소켓 버퍼를 할당합니다. 직후 사용되는 `NETLINK_CB` 매크로를 살펴보겠습니다.
 
@@ -887,6 +887,501 @@ struct netlink_skb_parms {
 #define NETLINK_CB(skb) (*(struct netlink_skb_parms*)&((skb)->cb))
 ```
 
-소켓 버퍼의 `cb` 필드를 `struct netlink_skb_parms`로 캐스팅하여 접근하는 매크로입니다. `cb` 필드는 각 네트워크 계층에서 자유롭게 사용할 수 있는 휘발성 제어 버퍼입니다.
+소켓 버퍼의 `cb` 필드를 `struct netlink_skb_parms`로 캐스팅하여 접근하는 매크로입니다. `cb` 필드는 각 네트워크 계층에서 자유롭게 사용할 수 있는 휘발성 제어 버퍼입니다. 여기서는 portid, group, 자격 증명, flags를 저장합니다.
 
-다시 `netlink_sendmsg`로 돌아가서, (5)에서 `struct iov_iter`를 통해 유저 공간의 메시지를 소켓 버퍼로 복사합니다. `struct iov_iter`에 래핑된 `struct iovec` 배열 자체는 이미 커널 공간에 있지만, 각 원소가 가리키는 실제 데이터는 아직 유저 공간에 있으므로 여기서 복사가 이루어집니다. (6)에서 LSM 보안 검사를 수행하고, (7)에서 목적지로 유니캐스트 전송합니다. 목적지 그룹이 지정된 경우에는 브로드캐스트 전송이 먼저 수행됩니다.
+(5)에서 `struct iov_iter`를 통해 유저 공간의 메시지를 소켓 버퍼로 복사합니다. `struct iov_iter`에 래핑된 `struct iovec` 배열 자체는 이미 커널 공간에 있지만, 각 원소가 가리키는 실제 데이터는 아직 유저 공간에 있으므로 여기서 복사가 이루어집니다. (6)에서 LSM 보안 검사를 수행하고, (7)에서 목적지로 유니캐스트 전송합니다. 목적지 그룹이 지정된 경우에는 멀티캐스트 전송이 먼저 수행됩니다. 멀티캐스트 전송은 여기서 다루지 않겠습니다. 이제 `netlink_unicast` 함수를 살펴보겠습니다.
+
+```c
+int netlink_unicast(struct sock *ssk, struct sk_buff *skb,
+		    u32 portid, int nonblock)
+{
+	struct sock *sk;
+	int err;
+	long timeo;
+
+	skb = netlink_trim(skb, gfp_any());                 // (0)
+
+	timeo = sock_sndtimeo(ssk, nonblock);               // (1)
+retry:
+	sk = netlink_getsockbyportid(ssk, portid);          // (2)
+	if (IS_ERR(sk)) {
+		kfree_skb(skb);
+		return PTR_ERR(sk);
+	}
+	if (netlink_is_kernel(sk))
+		return netlink_unicast_kernel(sk, skb, ssk);    // (3)
+
+	if (sk_filter(sk, skb)) {
+		err = skb->len;
+		kfree_skb(skb);
+		sock_put(sk);
+		return err;
+	}
+
+	err = netlink_attachskb(sk, skb, &timeo, ssk);
+	if (err == 1)
+		goto retry;
+	if (err)
+		return err;
+
+	return netlink_sendskb(sk, skb);
+}
+```
+
+(0)은 할당한 소켓 버퍼 크기가 과한 경우 메모리 낭비를 막기 위해 줄이는 함수입니다. 유저 공간에서 전송한 경우에는 이미 메시지 크기를 알고 있으므로 해당되지 않습니다. (1)은 송신자가 차단될 때의 타임아웃입니다. `setsockopt`로 타임아웃 시간을 지정하지 않은 이상 무한정 차단되며, 커널로 전송할 때는 차단될 일이 없으므로 해당되지 않습니다. 이후 (2)에서 수신자 portid에 해당하는 `sock` 구조체를 찾아서 (3)에서 커널로 유니캐스트 전송합니다. 먼저 `netlink_getsockbyportid` 함수를 살펴보겠습니다.
+
+```c
+static struct sock *netlink_getsockbyportid(struct sock *ssk, u32 portid)
+{
+	struct sock *sock;
+	struct netlink_sock *nlk;
+
+	sock = netlink_lookup(sock_net(ssk), ssk->sk_protocol, portid);             // (0)
+	if (!sock)
+		return ERR_PTR(-ECONNREFUSED);
+
+	/* Don't bother queuing skb if kernel socket has no input function */
+	nlk = nlk_sk(sock);
+	if (sock->sk_state == NETLINK_CONNECTED &&                                  // (1)
+	    nlk->dst_portid != nlk_sk(ssk)->portid) {
+		sock_put(sock);
+		return ERR_PTR(-ECONNREFUSED);
+	}
+	return sock;
+}
+```
+
+(0)에서 동일한 네트워크 네임스페이스 내에서 동일한 프로토콜을 사용하는 수신자의 소켓 구조체를 portid로 찾아냅니다. (1)은 `connect`로 송수신자가 서로 고정된 경우, 다른 소켓이 송신하면 연결을 거부하기 위한 검사입니다. 이제 `netlink_unicast_kernel` 함수를 살펴보겠습니다.
+
+```c
+static int netlink_unicast_kernel(struct sock *sk, struct sk_buff *skb,
+				  struct sock *ssk)
+{
+	int ret;
+	struct netlink_sock *nlk = nlk_sk(sk);
+
+	ret = -ECONNREFUSED;
+	if (nlk->netlink_rcv != NULL) {                         // (0)
+		ret = skb->len;
+		netlink_skb_set_owner_r(skb, sk);                   // (1)
+		NETLINK_CB(skb).sk = ssk;                           // (2)
+		netlink_deliver_tap_kernel(sk, ssk, skb);           // (3)
+		nlk->netlink_rcv(skb);                              // (4)
+		consume_skb(skb);
+	} else {
+		kfree_skb(skb);
+	}
+	sock_put(sk);
+	return ret;
+}
+```
+
+`struct netlink_sock`의 `netlink_rcv` 필드는 앞서 살펴본 커널 모듈 예제의 초기화 함수에서 `netlink_kernel_create`를 호출할 때 등록한 콜백 함수가 저장되는 필드입니다. (0)에서 수신 콜백 함수가 등록되어 있지 않은 경우 패킷을 조용히 버립니다. 등록된 경우, (1)에서 소켓 버퍼를 수신자의 소켓으로 완전히 귀속시키고, (2)에서 송신자 소켓 정보도 저장합니다. (3)은 netlink 메시지를 모니터링하는 `nlmon` 같은 가상 네트워크 장치에 전달하기 위해 사용됩니다. (4)에서 해당 netlink 패밀리의 수신 콜백 함수를 호출하여 메시지를 처리한 뒤 소켓 버퍼와 소켓을 정리합니다.
+
+## nfnetlink
+
+nfnetlink는 유저 공간에서 netlink를 통해 iptables나 nftables에 접근하기 위한 인터페이스입니다. nfnetlink는 메시지를 `struct nlmsghdr` -> `struct nfgenmsg` -> `struct nlattr` 형식으로 다룹니다. `struct nlmsghdr`는 이미 살펴봤으므로 나머지 두 구조체를 살펴보겠습니다.
+
+```c
+struct nfgenmsg {
+	__u8  nfgen_family;		/* AF_xxx */
+	__u8  version;		/* nfnetlink version */
+	__be16    res_id;		/* resource id */
+};
+```
+
+`nfgen_family`는 방화벽을 설정할 주소 패밀리를 지정합니다. IPv4와 IPv6 공통의 경우 `NFPROTO_INET`이 사용됩니다. `version`은 현재 0만 존재합니다. `res_id`는 nftables의 경우 begin 메시지에만 사용되며, 값으로 `NFNL_SUBSYS_NFTABLES`를 사용합니다.
+
+```c
+struct nlattr {
+	__u16           nla_len;
+	__u16           nla_type;
+};
+```
+
+`struct nlattr`은 TLV(Type-Length-Value) 형태를 가집니다. `struct nlattr`는 헤더이며, 페이로드가 정렬을 요구하는 경우 패딩과 함께 바로 뒤에 따라옵니다. `nla_len`은 패딩을 제외한 크기이며, `nla_type`은 서브시스템에서 사용하는 속성 타입입니다.
+
+이제 nfnetlink를 살펴보겠습니다. netlink 메시지가 `NETLINK_NETFILTER` 패밀리로 전송되면 수신 콜백 함수로 `nfnetlink_rcv`가 호출됩니다.
+
+```c
+static void nfnetlink_rcv(struct sk_buff *skb)
+{
+	struct nlmsghdr *nlh = nlmsg_hdr(skb);          
+
+	if (skb->len < NLMSG_HDRLEN ||
+	    nlh->nlmsg_len < NLMSG_HDRLEN ||
+	    skb->len < nlh->nlmsg_len)
+		return;
+
+	if (!netlink_net_capable(skb, CAP_NET_ADMIN)) {
+		netlink_ack(skb, nlh, -EPERM, NULL);
+		return;
+	}
+
+	if (nlh->nlmsg_type == NFNL_MSG_BATCH_BEGIN)
+		nfnetlink_rcv_skb_batch(skb, nlh);
+	else
+		netlink_rcv_skb(skb, nfnetlink_rcv_msg);
+}
+```
+
+소켓 버퍼에서 메시지를 꺼낸 후 값들을 검증하고 권한을 확인합니다. netfilter에는 네트워크 관리자만 접근할 수 있으므로, `CAP_NET_ADMIN` 권한이 없는 경우 송신 측에 에러 메시지를 전송합니다. 이후 메시지 타입이 `NFNL_MSG_BATCH_BEGIN`인지에 따라 처리 경로가 갈립니다.
+
+`nfnetlink_rcv_skb_batch` 함수는 여러 메시지를 하나의 트랜잭션으로 묶어 원자적으로 처리합니다. 예를 들어 10개의 명령 메시지 중 9번째가 실패하면 앞서 처리된 8개를 모두 롤백하고 처음부터 다시 시도합니다. 또한 이 경로에서는 `NFNL_CB_BATCH` 타입의 콜백 함수만 처리할 수 있습니다. 반면 `netlink_rcv_skb` 함수는 메시지를 하나씩 단독으로 처리하며, `NFNL_CB_RCU` 및 `NFNL_CB_MUTEX` 타입의 콜백 함수만 처리할 수 있습니다. 여기서는 `nfnetlink_rcv_skb_batch` 함수만 다룹니다.
+
+```c
+static void nfnetlink_rcv_skb_batch(struct sk_buff *skb, struct nlmsghdr *nlh)
+{
+	int min_len = nlmsg_total_size(sizeof(struct nfgenmsg));
+	struct nlattr *attr = (void *)nlh + min_len;
+	struct nlattr *cda[NFNL_BATCH_MAX + 1];
+	int attrlen = nlh->nlmsg_len - min_len;
+	struct nfgenmsg *nfgenmsg;
+	int msglen, err;
+	u32 gen_id = 0;
+	u16 res_id;
+
+	msglen = NLMSG_ALIGN(nlh->nlmsg_len);
+	if (msglen > skb->len)
+		msglen = skb->len;
+
+	if (skb->len < NLMSG_HDRLEN + sizeof(struct nfgenmsg))
+		return;
+
+	err = nla_parse_deprecated(cda, NFNL_BATCH_MAX, attr, attrlen,          // (0)
+				   nfnl_batch_policy, NULL);
+	if (err < 0) {
+		netlink_ack(skb, nlh, err, NULL);
+		return;
+	}
+	if (cda[NFNL_BATCH_GENID])
+		gen_id = ntohl(nla_get_be32(cda[NFNL_BATCH_GENID]));
+
+	nfgenmsg = nlmsg_data(nlh);                                             // (1)
+	skb_pull(skb, msglen);                                                  
+	/* Work around old nft using host byte order */
+	if (nfgenmsg->res_id == NFNL_SUBSYS_NFTABLES)
+		res_id = NFNL_SUBSYS_NFTABLES;
+	else
+		res_id = ntohs(nfgenmsg->res_id);
+
+	nfnetlink_rcv_batch(skb, nlh, res_id, gen_id);
+}
+```
+
+먼저 netlink 헤더의 `nlmsg_len` 값을 정렬한 뒤, 정렬된 크기가 소켓 버퍼 길이를 초과하면 버퍼 길이에 맞게 조정합니다. 소켓 버퍼가 너무 작으면 처리 없이 반환합니다. (0)의 `nla_parse_deprecated`는 배치 메시지의 `nlattr`를 정책에 따라 `cda` 배열에 파싱하는데, 배치 메시지에 `nlattr`가 없는 경우에는 해당되지 않습니다. 이후 (1)에서 `nlmsg_data`로 배치 메시지의 `nfgenmsg` 헤더를 읽어온 뒤, `skb_pull`을 호출하여 소켓 버퍼가 배치 메시지 다음 메시지를 가리키도록 합니다. `res_id`가 `NFNL_SUBSYS_NFTABLES`인 경우를 제외하고 엔디안 변환 후 `nfnetlink_rcv_batch`를 호출합니다.
+
+```c
+static void nfnetlink_rcv_batch(struct sk_buff *skb, struct nlmsghdr *nlh,
+				u16 subsys_id, u32 genid)
+{
+	struct sk_buff *oskb = skb;
+	struct net *net = sock_net(skb->sk);
+	const struct nfnetlink_subsystem *ss;
+	const struct nfnl_callback *nc;
+	struct netlink_ext_ack extack;
+	LIST_HEAD(err_list);
+	u32 status;
+	int err;
+
+	if (subsys_id >= NFNL_SUBSYS_COUNT)
+		return netlink_ack(skb, nlh, -EINVAL, NULL);
+replay:
+	status = 0;
+replay_abort:
+	skb = netlink_skb_clone(oskb, GFP_KERNEL);
+	if (!skb)
+		return netlink_ack(oskb, nlh, -ENOMEM, NULL);
+
+	nfnl_lock(subsys_id);
+	ss = nfnl_dereference_protected(subsys_id);
+	if (!ss) {
+#ifdef CONFIG_MODULES
+		nfnl_unlock(subsys_id);
+		request_module("nfnetlink-subsys-%d", subsys_id);
+		nfnl_lock(subsys_id);
+		ss = nfnl_dereference_protected(subsys_id);
+		if (!ss)
+#endif
+		{
+			nfnl_unlock(subsys_id);
+			netlink_ack(oskb, nlh, -EOPNOTSUPP, NULL);
+			return kfree_skb(skb);
+		}
+	}
+
+	if (!ss->valid_genid || !ss->commit || !ss->abort) {
+		nfnl_unlock(subsys_id);
+		netlink_ack(oskb, nlh, -EOPNOTSUPP, NULL);
+		return kfree_skb(skb);
+	}
+
+	if (!try_module_get(ss->owner)) {
+		nfnl_unlock(subsys_id);
+		netlink_ack(oskb, nlh, -EOPNOTSUPP, NULL);
+		return kfree_skb(skb);
+	}
+
+	if (!ss->valid_genid(net, genid)) {
+		module_put(ss->owner);
+		nfnl_unlock(subsys_id);
+		netlink_ack(oskb, nlh, -ERESTART, NULL);
+		return kfree_skb(skb);
+	}
+
+	nfnl_unlock(subsys_id);
+
+	while (skb->len >= nlmsg_total_size(0)) {
+		int msglen, type;
+
+		if (fatal_signal_pending(current)) {
+			nfnl_err_reset(&err_list);
+			err = -EINTR;
+			status = NFNL_BATCH_FAILURE;
+			goto done;
+		}
+
+		memset(&extack, 0, sizeof(extack));
+		nlh = nlmsg_hdr(skb);
+		err = 0;
+
+		if (nlh->nlmsg_len < NLMSG_HDRLEN ||
+		    skb->len < nlh->nlmsg_len ||
+		    nlmsg_len(nlh) < sizeof(struct nfgenmsg)) {
+			nfnl_err_reset(&err_list);
+			status |= NFNL_BATCH_FAILURE;
+			goto done;
+		}
+
+		/* Only requests are handled by the kernel */
+		if (!(nlh->nlmsg_flags & NLM_F_REQUEST)) {
+			err = -EINVAL;
+			goto ack;
+		}
+
+		type = nlh->nlmsg_type;
+		if (type == NFNL_MSG_BATCH_BEGIN) {
+			/* Malformed: Batch begin twice */
+			nfnl_err_reset(&err_list);
+			status |= NFNL_BATCH_FAILURE;
+			goto done;
+		} else if (type == NFNL_MSG_BATCH_END) {
+			status |= NFNL_BATCH_DONE;
+			goto done;
+		} else if (type < NLMSG_MIN_TYPE) {
+			err = -EINVAL;
+			goto ack;
+		}
+
+		/* We only accept a batch with messages for the same
+		 * subsystem.
+		 */
+		if (NFNL_SUBSYS_ID(type) != subsys_id) {
+			err = -EINVAL;
+			goto ack;
+		}
+
+		nc = nfnetlink_find_client(type, ss);
+		if (!nc) {
+			err = -EINVAL;
+			goto ack;
+		}
+
+		if (nc->type != NFNL_CB_BATCH) {
+			err = -EINVAL;
+			goto ack;
+		}
+
+		{
+			int min_len = nlmsg_total_size(sizeof(struct nfgenmsg));
+			struct nfnl_net *nfnlnet = nfnl_pernet(net);
+			struct nlattr *cda[NFNL_MAX_ATTR_COUNT + 1];
+			struct nlattr *attr = (void *)nlh + min_len;
+			u8 cb_id = NFNL_MSG_TYPE(nlh->nlmsg_type);
+			int attrlen = nlh->nlmsg_len - min_len;
+			struct nfnl_info info = {
+				.net	= net,
+				.sk	= nfnlnet->nfnl,
+				.nlh	= nlh,
+				.nfmsg	= nlmsg_data(nlh),
+				.extack	= &extack,
+			};
+
+			/* Sanity-check NFTA_MAX_ATTR */
+			if (ss->cb[cb_id].attr_count > NFNL_MAX_ATTR_COUNT) {
+				err = -ENOMEM;
+				goto ack;
+			}
+
+			err = nla_parse_deprecated(cda,
+						   ss->cb[cb_id].attr_count,
+						   attr, attrlen,
+						   ss->cb[cb_id].policy, NULL);
+			if (err < 0)
+				goto ack;
+
+			err = nc->call(skb, &info, (const struct nlattr **)cda);
+
+			/* The lock was released to autoload some module, we
+			 * have to abort and start from scratch using the
+			 * original skb.
+			 */
+			if (err == -EAGAIN) {
+				status |= NFNL_BATCH_REPLAY;
+				goto done;
+			}
+		}
+ack:
+		if (nlh->nlmsg_flags & NLM_F_ACK || err) {
+			/* Errors are delivered once the full batch has been
+			 * processed, this avoids that the same error is
+			 * reported several times when replaying the batch.
+			 */
+			if (nfnl_err_add(&err_list, nlh, err, &extack) < 0) {
+				/* We failed to enqueue an error, reset the
+				 * list of errors and send OOM to userspace
+				 * pointing to the batch header.
+				 */
+				nfnl_err_reset(&err_list);
+				netlink_ack(oskb, nlmsg_hdr(oskb), -ENOMEM,
+					    NULL);
+				status |= NFNL_BATCH_FAILURE;
+				goto done;
+			}
+			/* We don't stop processing the batch on errors, thus,
+			 * userspace gets all the errors that the batch
+			 * triggers.
+			 */
+			if (err)
+				status |= NFNL_BATCH_FAILURE;
+		}
+
+		msglen = NLMSG_ALIGN(nlh->nlmsg_len);
+		if (msglen > skb->len)
+			msglen = skb->len;
+		skb_pull(skb, msglen);
+	}
+done:
+	if (status & NFNL_BATCH_REPLAY) {
+		ss->abort(net, oskb, NFNL_ABORT_AUTOLOAD);
+		nfnl_err_reset(&err_list);
+		kfree_skb(skb);
+		module_put(ss->owner);
+		goto replay;
+	} else if (status == NFNL_BATCH_DONE) {
+		err = ss->commit(net, oskb);
+		if (err == -EAGAIN) {
+			status |= NFNL_BATCH_REPLAY;
+			goto done;
+		} else if (err) {
+			ss->abort(net, oskb, NFNL_ABORT_NONE);
+			netlink_ack(oskb, nlmsg_hdr(oskb), err, NULL);
+		}
+	} else {
+		enum nfnl_abort_action abort_action;
+
+		if (status & NFNL_BATCH_FAILURE)
+			abort_action = NFNL_ABORT_NONE;
+		else
+			abort_action = NFNL_ABORT_VALIDATE;
+
+		err = ss->abort(net, oskb, abort_action);
+		if (err == -EAGAIN) {
+			nfnl_err_reset(&err_list);
+			kfree_skb(skb);
+			module_put(ss->owner);
+			status |= NFNL_BATCH_FAILURE;
+			goto replay_abort;
+		}
+	}
+	if (ss->cleanup)
+		ss->cleanup(net);
+
+	nfnl_err_deliver(&err_list, oskb);
+	kfree_skb(skb);
+	module_put(ss->owner);
+}
+```
+
+트랜잭션 처리와 각종 예외 처리가 포함된 함수입니다. 먼저 `struct nfnetlink_subsystem`을 살펴보겠습니다.
+
+```c
+struct nfnetlink_subsystem {
+	const char *name;
+	__u8 subsys_id;			/* nfnetlink subsystem ID */
+	__u8 cb_count;			/* number of callbacks */
+	const struct nfnl_callback *cb;	/* callback for individual types */
+	struct module *owner;
+	int (*commit)(struct net *net, struct sk_buff *skb);
+	int (*abort)(struct net *net, struct sk_buff *skb,
+		     enum nfnl_abort_action action);
+	void (*cleanup)(struct net *net);
+	bool (*valid_genid)(struct net *net, u32 genid);
+};
+```
+
+nfnetlink의 각 서브시스템을 나타내는 구조체입니다. `name`은 서브시스템 이름, `subsys_id`는 고유 ID입니다. `cb_count`는 콜백 함수의 수이며, `cb`는 콜백 함수 포인터를 가지는 구조체 배열입니다. `owner`는 서브시스템을 담당하는 모듈을 나타냅니다. 나머지 함수 포인터들은 배치 트랜잭션 처리 전용입니다. nfnetlink에는 이 서브시스템별 구조체들을 담는 테이블이 있습니다.
+
+```c
+static struct {
+	struct mutex				mutex;
+	const struct nfnetlink_subsystem __rcu	*subsys;
+} table[NFNL_SUBSYS_COUNT];
+```
+
+이 배열의 인덱스는 `nfnetlink_subsystem`의 `subsys_id` 값입니다. `nfnetlink_subsystem`은 해당 서브시스템 모듈이 적재될 때, 혹은 빌트인 드라이버인 경우 부팅 시에 이 배열에 등록됩니다.
+
+이제 `nfnetlink_rcv_batch`의 핵심 코드만 발췌하여 살펴보겠습니다.
+
+```c
+        const struct nfnetlink_subsystem *ss;           // (0)
+        const struct nfnl_callback *nc;
+        ...
+        ss = nfnl_dereference_protected(subsys_id);
+        ...
+        type = nlh->nlmsg_type;
+        ...
+        nc = nfnetlink_find_client(type, ss);           // (1)
+        if (!nc) {
+            err = -EINVAL;
+            goto ack;
+        }
+
+        if (nc->type != NFNL_CB_BATCH) {                // (2)
+            err = -EINVAL;
+            goto ack;
+        }
+
+        {
+            int min_len = nlmsg_total_size(sizeof(struct nfgenmsg));
+            struct nfnl_net *nfnlnet = nfnl_pernet(net);
+            struct nlattr *cda[NFNL_MAX_ATTR_COUNT + 1];
+            struct nlattr *attr = (void *)nlh + min_len;
+            u8 cb_id = NFNL_MSG_TYPE(nlh->nlmsg_type);
+            int attrlen = nlh->nlmsg_len - min_len;
+            struct nfnl_info info = {
+                .net    = net,
+                .sk     = nfnlnet->nfnl,
+                .nlh    = nlh,
+                .nfmsg  = nlmsg_data(nlh),
+                .extack = &extack,
+            };
+
+            if (ss->cb[cb_id].attr_count > NFNL_MAX_ATTR_COUNT) {
+                err = -ENOMEM;
+                goto ack;
+            }
+
+            err = nla_parse_deprecated(cda,                             // (3)
+                           ss->cb[cb_id].attr_count,
+                           attr, attrlen,
+                           ss->cb[cb_id].policy, NULL);
+            if (err < 0)
+                goto ack;
+
+            err = nc->call(skb, &info, (const struct nlattr **)cda);    // (4)
+            ...
+        }
+```
+
+(0)에서 `subsys_id`에 해당하는 `nfnetlink_subsystem`을 참조합니다. (1)에서 해당 서브시스템에서 메시지 타입에 맞는 `nfnl_callback` 구조체를 찾습니다. 이 구조체의 `call` 필드에 해당 메시지를 처리할 콜백 함수가 저장되어 있습니다. (2)에서 콜백 함수의 유형이 `NFNL_CB_BATCH`인지 검사합니다. 유형이 맞다면 필요한 정보들을 구조화하고, (3)에서 `nlattr`들을 `cda` 배열에 파싱한 뒤, (4)에서 콜백 함수를 호출합니다.
