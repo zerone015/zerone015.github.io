@@ -1,5 +1,5 @@
 ---
-title: "(임시)nftable subsystem"
+title: "nftable subsystem"
 date: 2026-05-15 01:00:00 +0900
 categories: [Linux Kernel]
 tags: [netlink, nfnetlink, nftable]
@@ -990,7 +990,7 @@ struct nfgenmsg {
 };
 ```
 
-`nfgen_family`는 방화벽을 설정할 주소 패밀리를 지정합니다. IPv4와 IPv6 공통의 경우 `NFPROTO_INET`이 사용됩니다. `version`은 현재 0만 존재합니다. `res_id`는 nftables의 경우 begin 메시지에만 사용되며, 값으로 `NFNL_SUBSYS_NFTABLES`를 사용합니다.
+`nfgen_family`는 패밀리를 지정합니다. IPv4와 IPv6 공통의 경우 `NFPROTO_INET`이 사용됩니다. `version`은 현재 0만 존재합니다. `res_id`는 nftables의 경우 begin 메시지에만 사용되며, 값으로 `NFNL_SUBSYS_NFTABLES`를 사용합니다.
 
 ```c
 struct nlattr {
@@ -999,7 +999,7 @@ struct nlattr {
 };
 ```
 
-`struct nlattr`은 TLV(Type-Length-Value) 형태를 가집니다. `struct nlattr`는 헤더이며, 페이로드가 정렬을 요구하는 경우 패딩과 함께 바로 뒤에 따라옵니다. `nla_len`은 패딩을 제외한 크기이며, `nla_type`은 서브시스템에서 사용하는 속성 타입입니다.
+`struct nlattr`은 TLV(Type-Length-Value) 형태를 가집니다. `struct nlattr`는 헤더이며, 페이로드는 정렬을 요구하는 경우 패딩과 함께 헤더 바로 뒤에 따라옵니다. `nla_len`은 패딩을 제외한 크기이며, `nla_type`은 서브시스템에서 사용하는 속성 타입입니다.
 
 이제 nfnetlink를 살펴보겠습니다. netlink 메시지가 `NETLINK_NETFILTER` 패밀리로 전송되면 수신 콜백 함수로 `nfnetlink_rcv`가 호출됩니다.
 
@@ -1071,273 +1071,15 @@ static void nfnetlink_rcv_skb_batch(struct sk_buff *skb, struct nlmsghdr *nlh)
 
 먼저 netlink 헤더의 `nlmsg_len` 값을 정렬한 뒤, 정렬된 크기가 소켓 버퍼 길이를 초과하면 버퍼 길이에 맞게 조정합니다. 소켓 버퍼가 너무 작으면 처리 없이 반환합니다. (0)의 `nla_parse_deprecated`는 배치 메시지의 `nlattr`를 정책에 따라 `cda` 배열에 파싱하는데, 배치 메시지에 `nlattr`가 없는 경우에는 해당되지 않습니다. 이후 (1)에서 `nlmsg_data`로 배치 메시지의 `nfgenmsg` 헤더를 읽어온 뒤, `skb_pull`을 호출하여 소켓 버퍼가 배치 메시지 다음 메시지를 가리키도록 합니다. `res_id`가 `NFNL_SUBSYS_NFTABLES`인 경우를 제외하고 엔디안 변환 후 `nfnetlink_rcv_batch`를 호출합니다.
 
-```c
-static void nfnetlink_rcv_batch(struct sk_buff *skb, struct nlmsghdr *nlh,
-				u16 subsys_id, u32 genid)
-{
-	struct sk_buff *oskb = skb;
-	struct net *net = sock_net(skb->sk);
-	const struct nfnetlink_subsystem *ss;
-	const struct nfnl_callback *nc;
-	struct netlink_ext_ack extack;
-	LIST_HEAD(err_list);
-	u32 status;
-	int err;
-
-	if (subsys_id >= NFNL_SUBSYS_COUNT)
-		return netlink_ack(skb, nlh, -EINVAL, NULL);
-replay:
-	status = 0;
-replay_abort:
-	skb = netlink_skb_clone(oskb, GFP_KERNEL);
-	if (!skb)
-		return netlink_ack(oskb, nlh, -ENOMEM, NULL);
-
-	nfnl_lock(subsys_id);
-	ss = nfnl_dereference_protected(subsys_id);
-	if (!ss) {
-#ifdef CONFIG_MODULES
-		nfnl_unlock(subsys_id);
-		request_module("nfnetlink-subsys-%d", subsys_id);
-		nfnl_lock(subsys_id);
-		ss = nfnl_dereference_protected(subsys_id);
-		if (!ss)
-#endif
-		{
-			nfnl_unlock(subsys_id);
-			netlink_ack(oskb, nlh, -EOPNOTSUPP, NULL);
-			return kfree_skb(skb);
-		}
-	}
-
-	if (!ss->valid_genid || !ss->commit || !ss->abort) {
-		nfnl_unlock(subsys_id);
-		netlink_ack(oskb, nlh, -EOPNOTSUPP, NULL);
-		return kfree_skb(skb);
-	}
-
-	if (!try_module_get(ss->owner)) {
-		nfnl_unlock(subsys_id);
-		netlink_ack(oskb, nlh, -EOPNOTSUPP, NULL);
-		return kfree_skb(skb);
-	}
-
-	if (!ss->valid_genid(net, genid)) {
-		module_put(ss->owner);
-		nfnl_unlock(subsys_id);
-		netlink_ack(oskb, nlh, -ERESTART, NULL);
-		return kfree_skb(skb);
-	}
-
-	nfnl_unlock(subsys_id);
-
-	while (skb->len >= nlmsg_total_size(0)) {
-		int msglen, type;
-
-		if (fatal_signal_pending(current)) {
-			nfnl_err_reset(&err_list);
-			err = -EINTR;
-			status = NFNL_BATCH_FAILURE;
-			goto done;
-		}
-
-		memset(&extack, 0, sizeof(extack));
-		nlh = nlmsg_hdr(skb);
-		err = 0;
-
-		if (nlh->nlmsg_len < NLMSG_HDRLEN ||
-		    skb->len < nlh->nlmsg_len ||
-		    nlmsg_len(nlh) < sizeof(struct nfgenmsg)) {
-			nfnl_err_reset(&err_list);
-			status |= NFNL_BATCH_FAILURE;
-			goto done;
-		}
-
-		/* Only requests are handled by the kernel */
-		if (!(nlh->nlmsg_flags & NLM_F_REQUEST)) {
-			err = -EINVAL;
-			goto ack;
-		}
-
-		type = nlh->nlmsg_type;
-		if (type == NFNL_MSG_BATCH_BEGIN) {
-			/* Malformed: Batch begin twice */
-			nfnl_err_reset(&err_list);
-			status |= NFNL_BATCH_FAILURE;
-			goto done;
-		} else if (type == NFNL_MSG_BATCH_END) {
-			status |= NFNL_BATCH_DONE;
-			goto done;
-		} else if (type < NLMSG_MIN_TYPE) {
-			err = -EINVAL;
-			goto ack;
-		}
-
-		/* We only accept a batch with messages for the same
-		 * subsystem.
-		 */
-		if (NFNL_SUBSYS_ID(type) != subsys_id) {
-			err = -EINVAL;
-			goto ack;
-		}
-
-		nc = nfnetlink_find_client(type, ss);
-		if (!nc) {
-			err = -EINVAL;
-			goto ack;
-		}
-
-		if (nc->type != NFNL_CB_BATCH) {
-			err = -EINVAL;
-			goto ack;
-		}
-
-		{
-			int min_len = nlmsg_total_size(sizeof(struct nfgenmsg));
-			struct nfnl_net *nfnlnet = nfnl_pernet(net);
-			struct nlattr *cda[NFNL_MAX_ATTR_COUNT + 1];
-			struct nlattr *attr = (void *)nlh + min_len;
-			u8 cb_id = NFNL_MSG_TYPE(nlh->nlmsg_type);
-			int attrlen = nlh->nlmsg_len - min_len;
-			struct nfnl_info info = {
-				.net	= net,
-				.sk	= nfnlnet->nfnl,
-				.nlh	= nlh,
-				.nfmsg	= nlmsg_data(nlh),
-				.extack	= &extack,
-			};
-
-			/* Sanity-check NFTA_MAX_ATTR */
-			if (ss->cb[cb_id].attr_count > NFNL_MAX_ATTR_COUNT) {
-				err = -ENOMEM;
-				goto ack;
-			}
-
-			err = nla_parse_deprecated(cda,
-						   ss->cb[cb_id].attr_count,
-						   attr, attrlen,
-						   ss->cb[cb_id].policy, NULL);
-			if (err < 0)
-				goto ack;
-
-			err = nc->call(skb, &info, (const struct nlattr **)cda);
-
-			/* The lock was released to autoload some module, we
-			 * have to abort and start from scratch using the
-			 * original skb.
-			 */
-			if (err == -EAGAIN) {
-				status |= NFNL_BATCH_REPLAY;
-				goto done;
-			}
-		}
-ack:
-		if (nlh->nlmsg_flags & NLM_F_ACK || err) {
-			/* Errors are delivered once the full batch has been
-			 * processed, this avoids that the same error is
-			 * reported several times when replaying the batch.
-			 */
-			if (nfnl_err_add(&err_list, nlh, err, &extack) < 0) {
-				/* We failed to enqueue an error, reset the
-				 * list of errors and send OOM to userspace
-				 * pointing to the batch header.
-				 */
-				nfnl_err_reset(&err_list);
-				netlink_ack(oskb, nlmsg_hdr(oskb), -ENOMEM,
-					    NULL);
-				status |= NFNL_BATCH_FAILURE;
-				goto done;
-			}
-			/* We don't stop processing the batch on errors, thus,
-			 * userspace gets all the errors that the batch
-			 * triggers.
-			 */
-			if (err)
-				status |= NFNL_BATCH_FAILURE;
-		}
-
-		msglen = NLMSG_ALIGN(nlh->nlmsg_len);
-		if (msglen > skb->len)
-			msglen = skb->len;
-		skb_pull(skb, msglen);
-	}
-done:
-	if (status & NFNL_BATCH_REPLAY) {
-		ss->abort(net, oskb, NFNL_ABORT_AUTOLOAD);
-		nfnl_err_reset(&err_list);
-		kfree_skb(skb);
-		module_put(ss->owner);
-		goto replay;
-	} else if (status == NFNL_BATCH_DONE) {
-		err = ss->commit(net, oskb);
-		if (err == -EAGAIN) {
-			status |= NFNL_BATCH_REPLAY;
-			goto done;
-		} else if (err) {
-			ss->abort(net, oskb, NFNL_ABORT_NONE);
-			netlink_ack(oskb, nlmsg_hdr(oskb), err, NULL);
-		}
-	} else {
-		enum nfnl_abort_action abort_action;
-
-		if (status & NFNL_BATCH_FAILURE)
-			abort_action = NFNL_ABORT_NONE;
-		else
-			abort_action = NFNL_ABORT_VALIDATE;
-
-		err = ss->abort(net, oskb, abort_action);
-		if (err == -EAGAIN) {
-			nfnl_err_reset(&err_list);
-			kfree_skb(skb);
-			module_put(ss->owner);
-			status |= NFNL_BATCH_FAILURE;
-			goto replay_abort;
-		}
-	}
-	if (ss->cleanup)
-		ss->cleanup(net);
-
-	nfnl_err_deliver(&err_list, oskb);
-	kfree_skb(skb);
-	module_put(ss->owner);
-}
-```
-
-트랜잭션 처리와 각종 예외 처리가 포함된 함수입니다. 먼저 `struct nfnetlink_subsystem`을 살펴보겠습니다.
+`nfnetlink_rcv_batch`의 핵심 코드만 발췌하여 살펴보겠습니다.
 
 ```c
-struct nfnetlink_subsystem {
-	const char *name;
-	__u8 subsys_id;			/* nfnetlink subsystem ID */
-	__u8 cb_count;			/* number of callbacks */
-	const struct nfnl_callback *cb;	/* callback for individual types */
-	struct module *owner;
-	int (*commit)(struct net *net, struct sk_buff *skb);
-	int (*abort)(struct net *net, struct sk_buff *skb,
-		     enum nfnl_abort_action action);
-	void (*cleanup)(struct net *net);
-	bool (*valid_genid)(struct net *net, u32 genid);
-};
-```
-
-nfnetlink의 각 서브시스템을 나타내는 구조체입니다. `name`은 서브시스템 이름, `subsys_id`는 고유 ID입니다. `cb_count`는 콜백 함수의 수이며, `cb`는 콜백 함수 포인터를 가지는 구조체 배열입니다. `owner`는 서브시스템을 담당하는 모듈을 나타냅니다. 나머지 함수 포인터들은 배치 트랜잭션 처리 전용입니다. nfnetlink에는 이 서브시스템별 구조체들을 담는 테이블이 있습니다.
-
-```c
-static struct {
-	struct mutex				mutex;
-	const struct nfnetlink_subsystem __rcu	*subsys;
-} table[NFNL_SUBSYS_COUNT];
-```
-
-이 배열의 인덱스는 `nfnetlink_subsystem`의 `subsys_id` 값입니다. `nfnetlink_subsystem`은 해당 서브시스템 모듈이 적재될 때, 혹은 빌트인 드라이버인 경우 부팅 시에 이 배열에 등록됩니다.
-
-이제 `nfnetlink_rcv_batch`의 핵심 코드만 발췌하여 살펴보겠습니다.
-
-```c
-        const struct nfnetlink_subsystem *ss;           // (0)
-        const struct nfnl_callback *nc;
-        ...
-        ss = nfnl_dereference_protected(subsys_id);
+    const struct nfnetlink_subsystem *ss;           // (0)
+    const struct nfnl_callback *nc;
+    ...
+    ss = nfnl_dereference_protected(subsys_id);
+    ...
+    while (skb->len >= nlmsg_total_size(0)) {
         ...
         type = nlh->nlmsg_type;
         ...
@@ -1382,6 +1124,1444 @@ static struct {
             err = nc->call(skb, &info, (const struct nlattr **)cda);    // (4)
             ...
         }
+    }
+done:
+	if (status & NFNL_BATCH_REPLAY) {
+        ...
+	} else if (status == NFNL_BATCH_DONE) {
+		err = ss->commit(net, oskb);                    // (5)
+		...
+    }
 ```
 
-(0)에서 `subsys_id`에 해당하는 `nfnetlink_subsystem`을 참조합니다. (1)에서 해당 서브시스템에서 메시지 타입에 맞는 `nfnl_callback` 구조체를 찾습니다. 이 구조체의 `call` 필드에 해당 메시지를 처리할 콜백 함수가 저장되어 있습니다. (2)에서 콜백 함수의 유형이 `NFNL_CB_BATCH`인지 검사합니다. 유형이 맞다면 필요한 정보들을 구조화하고, (3)에서 `nlattr`들을 `cda` 배열에 파싱한 뒤, (4)에서 콜백 함수를 호출합니다.
+(0)에서 `subsys_id`에 해당하는 `nfnetlink_subsystem`을 참조합니다. (1)에서 해당 서브시스템에서 메시지 타입에 맞는 `nfnl_callback` 구조체를 찾습니다. 이 구조체의 `call` 필드에 해당 메시지를 처리할 콜백 함수가 저장되어 있습니다. (2)에서 콜백 함수의 유형이 `NFNL_CB_BATCH`인지 검사합니다. 유형이 맞다면 필요한 정보들을 구조화하고, (3)에서 `nlattr`들을 `cda` 배열에 파싱한 뒤, (4)에서 콜백 함수를 호출합니다. 트랜잭션 내 모든 메시지가 성공적으로 처리되면 (5)에서 커밋 콜백 함수가 호출되어 모든 요청이 반영됩니다.
+
+## nftables
+
+nftables는 넷필터의 구성 요소 중 하나로 iptables를 대체하기 위해 도입된 패킷 필터링 및 라우팅 프레임워크입니다. 기본 구성 요소는 다음과 같습니다.
+
+- **table**: chain과 set을 담는 최상위 요소입니다.
+- **chain**: 패킷이 순서대로 통과하며 검사받는 rule들의 목록입니다.
+- **rule**: expression들로 구성되어 패킷의 처리 방식을 결정합니다.
+- **expression**: 패킷 데이터를 실질적으로 평가하는 연산입니다.
+- **set**: rule에서 참조할 수 있는 IP 주소, 포트 번호 등의 집합입니다.
+- **object**: counter, quota, limit 등 상태를 유지하는 객체입니다.
+
+nftables 서브시스템의 메시지 유형별 콜백 함수 테이블은 다음과 같습니다.
+
+```c
+static const struct nfnl_callback nf_tables_cb[NFT_MSG_MAX] = {
+	[NFT_MSG_NEWTABLE] = {
+		.call		= nf_tables_newtable,
+		.type		= NFNL_CB_BATCH,
+		.attr_count	= NFTA_TABLE_MAX,
+		.policy		= nft_table_policy,
+	},
+	[NFT_MSG_GETTABLE] = {
+		.call		= nf_tables_gettable,
+		.type		= NFNL_CB_RCU,
+		.attr_count	= NFTA_TABLE_MAX,
+		.policy		= nft_table_policy,
+	},
+	[NFT_MSG_DELTABLE] = {
+		.call		= nf_tables_deltable,
+		.type		= NFNL_CB_BATCH,
+		.attr_count	= NFTA_TABLE_MAX,
+		.policy		= nft_table_policy,
+	},
+	[NFT_MSG_NEWCHAIN] = {
+		.call		= nf_tables_newchain,
+		.type		= NFNL_CB_BATCH,
+		.attr_count	= NFTA_CHAIN_MAX,
+		.policy		= nft_chain_policy,
+	},
+	[NFT_MSG_GETCHAIN] = {
+		.call		= nf_tables_getchain,
+		.type		= NFNL_CB_RCU,
+		.attr_count	= NFTA_CHAIN_MAX,
+		.policy		= nft_chain_policy,
+	},
+	[NFT_MSG_DELCHAIN] = {
+		.call		= nf_tables_delchain,
+		.type		= NFNL_CB_BATCH,
+		.attr_count	= NFTA_CHAIN_MAX,
+		.policy		= nft_chain_policy,
+	},
+	[NFT_MSG_NEWRULE] = {
+		.call		= nf_tables_newrule,
+		.type		= NFNL_CB_BATCH,
+		.attr_count	= NFTA_RULE_MAX,
+		.policy		= nft_rule_policy,
+	},
+	[NFT_MSG_GETRULE] = {
+		.call		= nf_tables_getrule,
+		.type		= NFNL_CB_RCU,
+		.attr_count	= NFTA_RULE_MAX,
+		.policy		= nft_rule_policy,
+	},
+	[NFT_MSG_DELRULE] = {
+		.call		= nf_tables_delrule,
+		.type		= NFNL_CB_BATCH,
+		.attr_count	= NFTA_RULE_MAX,
+		.policy		= nft_rule_policy,
+	},
+	[NFT_MSG_NEWSET] = {
+		.call		= nf_tables_newset,
+		.type		= NFNL_CB_BATCH,
+		.attr_count	= NFTA_SET_MAX,
+		.policy		= nft_set_policy,
+	},
+	[NFT_MSG_GETSET] = {
+		.call		= nf_tables_getset,
+		.type		= NFNL_CB_RCU,
+		.attr_count	= NFTA_SET_MAX,
+		.policy		= nft_set_policy,
+	},
+	[NFT_MSG_DELSET] = {
+		.call		= nf_tables_delset,
+		.type		= NFNL_CB_BATCH,
+		.attr_count	= NFTA_SET_MAX,
+		.policy		= nft_set_policy,
+	},
+	[NFT_MSG_NEWSETELEM] = {
+		.call		= nf_tables_newsetelem,
+		.type		= NFNL_CB_BATCH,
+		.attr_count	= NFTA_SET_ELEM_LIST_MAX,
+		.policy		= nft_set_elem_list_policy,
+	},
+	[NFT_MSG_GETSETELEM] = {
+		.call		= nf_tables_getsetelem,
+		.type		= NFNL_CB_RCU,
+		.attr_count	= NFTA_SET_ELEM_LIST_MAX,
+		.policy		= nft_set_elem_list_policy,
+	},
+	[NFT_MSG_DELSETELEM] = {
+		.call		= nf_tables_delsetelem,
+		.type		= NFNL_CB_BATCH,
+		.attr_count	= NFTA_SET_ELEM_LIST_MAX,
+		.policy		= nft_set_elem_list_policy,
+	},
+	[NFT_MSG_GETGEN] = {
+		.call		= nf_tables_getgen,
+		.type		= NFNL_CB_RCU,
+	},
+	[NFT_MSG_NEWOBJ] = {
+		.call		= nf_tables_newobj,
+		.type		= NFNL_CB_BATCH,
+		.attr_count	= NFTA_OBJ_MAX,
+		.policy		= nft_obj_policy,
+	},
+	[NFT_MSG_GETOBJ] = {
+		.call		= nf_tables_getobj,
+		.type		= NFNL_CB_RCU,
+		.attr_count	= NFTA_OBJ_MAX,
+		.policy		= nft_obj_policy,
+	},
+	[NFT_MSG_DELOBJ] = {
+		.call		= nf_tables_delobj,
+		.type		= NFNL_CB_BATCH,
+		.attr_count	= NFTA_OBJ_MAX,
+		.policy		= nft_obj_policy,
+	},
+	[NFT_MSG_GETOBJ_RESET] = {
+		.call		= nf_tables_getobj,
+		.type		= NFNL_CB_RCU,
+		.attr_count	= NFTA_OBJ_MAX,
+		.policy		= nft_obj_policy,
+	},
+	[NFT_MSG_NEWFLOWTABLE] = {
+		.call		= nf_tables_newflowtable,
+		.type		= NFNL_CB_BATCH,
+		.attr_count	= NFTA_FLOWTABLE_MAX,
+		.policy		= nft_flowtable_policy,
+	},
+	[NFT_MSG_GETFLOWTABLE] = {
+		.call		= nf_tables_getflowtable,
+		.type		= NFNL_CB_RCU,
+		.attr_count	= NFTA_FLOWTABLE_MAX,
+		.policy		= nft_flowtable_policy,
+	},
+	[NFT_MSG_DELFLOWTABLE] = {
+		.call		= nf_tables_delflowtable,
+		.type		= NFNL_CB_BATCH,
+		.attr_count	= NFTA_FLOWTABLE_MAX,
+		.policy		= nft_flowtable_policy,
+	},
+};
+```
+
+CVE-2022-34918과 관련 있는 메시지 유형은 `NFT_MSG_NEWTABLE`, `NFT_MSG_NEWSET`, `NFT_MSG_NEWSETELEM`입니다. 세 가지 콜백 함수를 순서대로 살펴보겠습니다.
+
+### `nf_tables_newtable`
+
+```c
+static int nf_tables_newtable(struct sk_buff *skb, const struct nfnl_info *info,
+			      const struct nlattr * const nla[])
+{
+	struct nftables_pernet *nft_net = nft_pernet(info->net);
+	struct netlink_ext_ack *extack = info->extack;
+	u8 genmask = nft_genmask_next(info->net);
+	u8 family = info->nfmsg->nfgen_family;
+	struct net *net = info->net;
+	const struct nlattr *attr;
+	struct nft_table *table;
+	struct nft_ctx ctx;
+	u32 flags = 0;
+	int err;
+
+	if (!nft_supported_family(family))                          // (0)
+		return -EOPNOTSUPP;
+
+	lockdep_assert_held(&nft_net->commit_mutex);
+	attr = nla[NFTA_TABLE_NAME];
+	table = nft_table_lookup(net, attr, family, genmask,        // (1)
+				 NETLINK_CB(skb).portid);
+	if (IS_ERR(table)) {
+		if (PTR_ERR(table) != -ENOENT)
+			return PTR_ERR(table);
+	} else {                                                    // (2)
+		if (info->nlh->nlmsg_flags & NLM_F_EXCL) {
+			NL_SET_BAD_ATTR(extack, attr);
+			return -EEXIST;
+		}
+		if (info->nlh->nlmsg_flags & NLM_F_REPLACE)
+			return -EOPNOTSUPP;
+
+		nft_ctx_init(&ctx, net, skb, info->nlh, family, table, NULL, nla);
+
+		return nf_tables_updtable(&ctx);                        // (3)
+	}
+
+	if (nla[NFTA_TABLE_FLAGS]) {                                // (4)
+		flags = ntohl(nla_get_be32(nla[NFTA_TABLE_FLAGS]));
+		if (flags & ~NFT_TABLE_F_MASK)
+			return -EOPNOTSUPP;
+	}
+
+	err = -ENOMEM;
+	table = kzalloc(sizeof(*table), GFP_KERNEL_ACCOUNT);
+	if (table == NULL)
+		goto err_kzalloc;
+
+	table->name = nla_strdup(attr, GFP_KERNEL_ACCOUNT);
+	if (table->name == NULL)
+		goto err_strdup;
+
+	if (nla[NFTA_TABLE_USERDATA]) {                             // (5)
+		table->udata = nla_memdup(nla[NFTA_TABLE_USERDATA], GFP_KERNEL_ACCOUNT);
+		if (table->udata == NULL)
+			goto err_table_udata;
+
+		table->udlen = nla_len(nla[NFTA_TABLE_USERDATA]);
+	}
+
+	err = rhltable_init(&table->chains_ht, &nft_chain_ht_params);
+	if (err)
+		goto err_chain_ht;
+
+	INIT_LIST_HEAD(&table->chains);
+	INIT_LIST_HEAD(&table->sets);
+	INIT_LIST_HEAD(&table->objects);
+	INIT_LIST_HEAD(&table->flowtables);
+	table->family = family;
+	table->flags = flags;
+	table->handle = ++table_handle;
+	if (table->flags & NFT_TABLE_F_OWNER)                       // (6)
+		table->nlpid = NETLINK_CB(skb).portid;
+
+	nft_ctx_init(&ctx, net, skb, info->nlh, family, table, NULL, nla);      
+	err = nft_trans_table_add(&ctx, NFT_MSG_NEWTABLE);                       // (7)
+	if (err < 0)
+		goto err_trans;
+
+	list_add_tail_rcu(&table->list, &nft_net->tables);
+	return 0;
+	/* ... error cleanup ... */
+}
+```
+
+(0)에서 지원되는 패밀리인지 확인합니다. `nft_supported_family`를 보면 `NFPROTO_INET`, `NFPROTO_IPV4`, `NFPROTO_ARP`, `NFPROTO_NETDEV`, `NFPROTO_BRIDGE`, `NFPROTO_IPV6` 등 빌드 설정에 따라 지원 여부가 결정됩니다.
+
+(1)에서 동일한 이름의 테이블이 이미 존재하는지 확인합니다. 이미 존재하는 경우 (2)로 진입하여 플래그를 검사합니다. `NLM_F_EXCL`은 기존 테이블이 있으면 실패하라는 의미이므로 `-EEXIST`를 반환하고, `NLM_F_REPLACE`는 테이블 생성에서 지원하지 않는 플래그이므로 `-EOPNOTSUPP`를 반환합니다. 두 플래그 모두 없는 경우에는 기존 테이블을 업데이트하는 (3)의 `nf_tables_updtable`이 호출됩니다.
+
+존재하지 않는 경우 새로 생성 경로로 진입합니다. (4)에서 플래그를 엔디안 변환 후 유효하지 않은 플래그가 섞여 있으면 에러를 반환합니다. 이후 테이블 구조체를 할당하고 이름을 복사합니다. (5)에서 `NFTA_TABLE_USERDATA`가 있으면 복사하는데, 이 필드는 테이블에 임의의 메타데이터를 첨부할 때 사용됩니다. 이후 체인 해시 테이블을 초기화하고 각 리스트 헤드를 설정합니다. `handle`은 테이블에 고유 번호를 부여하며, (6)에서 `NFT_TABLE_F_OWNER` 플래그가 있으면 테이블을 송신자 portid에 귀속시킵니다. 이 플래그가 설정된 테이블은 해당 프로세스가 종료될 때 함께 삭제됩니다. 마지막으로 (7)에서 트랜잭션 구조체를 할당하고 리스트에 추가합니다.
+
+`nf_tables_updtable`은 기존 테이블의 플래그를 변경하는 함수입니다.
+
+```c
+static int nf_tables_updtable(struct nft_ctx *ctx)
+{
+	struct nft_trans *trans;
+	u32 flags;
+	int ret;
+
+	if (!ctx->nla[NFTA_TABLE_FLAGS])        // (0)
+		return 0;
+
+	flags = ntohl(nla_get_be32(ctx->nla[NFTA_TABLE_FLAGS]));
+	if (flags & ~NFT_TABLE_F_MASK)          // (1)
+		return -EOPNOTSUPP;
+
+	if (flags == ctx->table->flags)         // (2)
+		return 0;
+
+	if ((nft_table_has_owner(ctx->table) &&     // (3)
+	     !(flags & NFT_TABLE_F_OWNER)) ||
+	    (!nft_table_has_owner(ctx->table) &&
+	     flags & NFT_TABLE_F_OWNER))
+		return -EOPNOTSUPP;
+
+	trans = nft_trans_alloc(ctx, NFT_MSG_NEWTABLE,  // (4)
+				sizeof(struct nft_trans_table));
+	if (trans == NULL)
+		return -ENOMEM;
+
+	if ((flags & NFT_TABLE_F_DORMANT) &&                // (5)
+	    !(ctx->table->flags & NFT_TABLE_F_DORMANT)) {
+		ctx->table->flags |= NFT_TABLE_F_DORMANT;
+		if (!(ctx->table->flags & __NFT_TABLE_F_UPDATE))
+			ctx->table->flags |= __NFT_TABLE_F_WAS_AWAKEN;
+	} else if (!(flags & NFT_TABLE_F_DORMANT) &&
+		   ctx->table->flags & NFT_TABLE_F_DORMANT) {
+		ctx->table->flags &= ~NFT_TABLE_F_DORMANT;
+		if (!(ctx->table->flags & __NFT_TABLE_F_UPDATE)) {
+			ret = nf_tables_table_enable(ctx->net, ctx->table);
+			if (ret < 0)
+				goto err_register_hooks;
+
+			ctx->table->flags |= __NFT_TABLE_F_WAS_DORMANT;
+		}
+	}
+
+	nft_trans_table_update(trans) = true;
+	nft_trans_commit_list_add_tail(ctx->net, trans);    // (6)
+
+	return 0;
+
+err_register_hooks:
+	nft_trans_destroy(trans);
+	return ret;
+}
+```
+
+(0)에서 플래그가 없으면 업데이트할 내용이 없으므로 바로 반환합니다. (1)에서 유효하지 않은 플래그를 거부합니다. 유효한 플래그는 `NFT_TABLE_F_DORMANT`(테이블 일시 휴면)와 `NFT_TABLE_F_OWNER`(프로세스 귀속) 두 가지입니다. (2)에서 현재 플래그와 동일하면 변경 사항이 없으므로 반환합니다. (3)에서 소유 상태를 변경하려는 시도를 차단합니다. 소유 상태는 테이블 생성 시에만 결정되며 이후 변경이 불가합니다.
+
+모든 검사를 통과하면 (4)에서 트랜잭션 구조체를 할당합니다. (5)에서 휴면 상태 전환을 처리합니다. 휴면 상태로 전환하는 경우 `NFT_TABLE_F_DORMANT` 플래그를 추가하고, 트랜잭션 내에서 아직 업데이트된 적이 없다면 `__NFT_TABLE_F_WAS_AWAKEN`으로 이전 상태를 기록합니다. 반대로 휴면 상태를 해제하는 경우에는 플래그를 제거하고, 아직 업데이트된 적이 없다면 훅을 활성화한 뒤 `__NFT_TABLE_F_WAS_DORMANT`로 기록합니다. 이 `__NFT_TABLE_F_*` 플래그들은 트랜잭션 롤백 시 이전 상태를 복원하기 위한 커널 내부 전용 플래그입니다. (6)에서 트랜잭션 구조체를 커밋 리스트에 추가합니다.
+
+### `nf_tables_newset`
+
+```c
+static int nf_tables_newset(struct sk_buff *skb, const struct nfnl_info *info,
+			    const struct nlattr * const nla[])
+{
+	u32 ktype, dtype, flags, policy, gc_int, objtype;
+	struct netlink_ext_ack *extack = info->extack;
+	u8 genmask = nft_genmask_next(info->net);
+	u8 family = info->nfmsg->nfgen_family;
+	const struct nft_set_ops *ops;
+	struct nft_expr *expr = NULL;
+	struct net *net = info->net;
+	struct nft_set_desc desc;
+	struct nft_table *table;
+	unsigned char *udata;
+	struct nft_set *set;
+	struct nft_ctx ctx;
+	size_t alloc_size;
+	u64 timeout;
+	char *name;
+	int err, i;
+	u16 udlen;
+	u64 size;
+
+	if (nla[NFTA_SET_TABLE] == NULL ||                      // (0)
+	    nla[NFTA_SET_NAME] == NULL ||
+	    nla[NFTA_SET_KEY_LEN] == NULL ||
+	    nla[NFTA_SET_ID] == NULL)
+		return -EINVAL;
+
+	ktype = NFT_DATA_VALUE;
+	if (nla[NFTA_SET_KEY_TYPE] != NULL) {                   // (1)
+		ktype = ntohl(nla_get_be32(nla[NFTA_SET_KEY_TYPE]));
+		if ((ktype & NFT_DATA_RESERVED_MASK) == NFT_DATA_RESERVED_MASK)
+			return -EINVAL;
+	}
+
+	desc.klen = ntohl(nla_get_be32(nla[NFTA_SET_KEY_LEN]));
+	if (desc.klen == 0 || desc.klen > NFT_DATA_VALUE_MAXLEN)    // (2)
+		return -EINVAL;
+
+	flags = 0;
+	if (nla[NFTA_SET_FLAGS] != NULL) {                          // (3)
+		flags = ntohl(nla_get_be32(nla[NFTA_SET_FLAGS]));
+		if (flags & ~(NFT_SET_ANONYMOUS | NFT_SET_CONSTANT |
+			      NFT_SET_INTERVAL | NFT_SET_TIMEOUT |
+			      NFT_SET_MAP | NFT_SET_EVAL |
+			      NFT_SET_OBJECT | NFT_SET_CONCAT | NFT_SET_EXPR))
+			return -EOPNOTSUPP;
+		if ((flags & (NFT_SET_MAP | NFT_SET_OBJECT)) ==
+			     (NFT_SET_MAP | NFT_SET_OBJECT))
+			return -EOPNOTSUPP;
+		if ((flags & (NFT_SET_EVAL | NFT_SET_OBJECT)) ==
+			     (NFT_SET_EVAL | NFT_SET_OBJECT))
+			return -EOPNOTSUPP;
+	}
+
+	dtype = 0;
+	if (nla[NFTA_SET_DATA_TYPE] != NULL) {              // (4)
+		if (!(flags & NFT_SET_MAP))
+			return -EINVAL;
+
+		dtype = ntohl(nla_get_be32(nla[NFTA_SET_DATA_TYPE]));
+		if ((dtype & NFT_DATA_RESERVED_MASK) == NFT_DATA_RESERVED_MASK &&
+		    dtype != NFT_DATA_VERDICT)
+			return -EINVAL;
+
+		if (dtype != NFT_DATA_VERDICT) {
+			if (nla[NFTA_SET_DATA_LEN] == NULL)
+				return -EINVAL;
+			desc.dlen = ntohl(nla_get_be32(nla[NFTA_SET_DATA_LEN]));
+			if (desc.dlen == 0 || desc.dlen > NFT_DATA_VALUE_MAXLEN)
+				return -EINVAL;
+		} else
+			desc.dlen = sizeof(struct nft_verdict);
+	} else if (flags & NFT_SET_MAP)
+		return -EINVAL;
+
+	if (nla[NFTA_SET_OBJ_TYPE] != NULL) {               // (5)
+		if (!(flags & NFT_SET_OBJECT))
+			return -EINVAL;
+
+		objtype = ntohl(nla_get_be32(nla[NFTA_SET_OBJ_TYPE]));
+		if (objtype == NFT_OBJECT_UNSPEC ||
+		    objtype > NFT_OBJECT_MAX)
+			return -EOPNOTSUPP;
+	} else if (flags & NFT_SET_OBJECT)
+		return -EINVAL;
+	else
+		objtype = NFT_OBJECT_UNSPEC;
+
+	timeout = 0;
+	if (nla[NFTA_SET_TIMEOUT] != NULL) {                // (6)
+		if (!(flags & NFT_SET_TIMEOUT))
+			return -EINVAL;
+		err = nf_msecs_to_jiffies64(nla[NFTA_SET_TIMEOUT], &timeout);
+		if (err)
+			return err;
+	}
+	gc_int = 0;
+	if (nla[NFTA_SET_GC_INTERVAL] != NULL) {
+		if (!(flags & NFT_SET_TIMEOUT))
+			return -EINVAL;
+		gc_int = ntohl(nla_get_be32(nla[NFTA_SET_GC_INTERVAL]));
+	}
+
+	policy = NFT_SET_POL_PERFORMANCE;
+	if (nla[NFTA_SET_POLICY] != NULL)                                   // (7)
+		policy = ntohl(nla_get_be32(nla[NFTA_SET_POLICY]));
+
+	if (nla[NFTA_SET_DESC] != NULL) {                                   // (8)
+		err = nf_tables_set_desc_parse(&desc, nla[NFTA_SET_DESC]);
+		if (err < 0)
+			return err;
+	}
+
+	if (nla[NFTA_SET_EXPR] || nla[NFTA_SET_EXPRESSIONS])                // (9)
+		desc.expr = true;
+
+	table = nft_table_lookup(net, nla[NFTA_SET_TABLE], family, genmask, // (10)
+				 NETLINK_CB(skb).portid);
+	if (IS_ERR(table)) {
+		NL_SET_BAD_ATTR(extack, nla[NFTA_SET_TABLE]);
+		return PTR_ERR(table);
+	}
+
+	nft_ctx_init(&ctx, net, skb, info->nlh, family, table, NULL, nla);  // (11)
+
+	set = nft_set_lookup(table, nla[NFTA_SET_NAME], genmask);           // (12)
+	if (IS_ERR(set)) {
+		if (PTR_ERR(set) != -ENOENT) {
+			NL_SET_BAD_ATTR(extack, nla[NFTA_SET_NAME]);
+			return PTR_ERR(set);
+		}
+	} else {
+		if (info->nlh->nlmsg_flags & NLM_F_EXCL) {
+			NL_SET_BAD_ATTR(extack, nla[NFTA_SET_NAME]);
+			return -EEXIST;
+		}
+		if (info->nlh->nlmsg_flags & NLM_F_REPLACE)
+			return -EOPNOTSUPP;
+		return 0;
+	}
+
+	if (!(info->nlh->nlmsg_flags & NLM_F_CREATE))
+		return -ENOENT;
+
+	ops = nft_select_set_ops(&ctx, nla, &desc, policy);                 // (13)
+	if (IS_ERR(ops))
+		return PTR_ERR(ops);
+
+	udlen = 0;
+	if (nla[NFTA_SET_USERDATA])                                         // (14)        
+		udlen = nla_len(nla[NFTA_SET_USERDATA]);
+
+	size = 0;
+	if (ops->privsize != NULL)                                          // (15)
+		size = ops->privsize(nla, &desc);
+	alloc_size = sizeof(*set) + size + udlen;
+	if (alloc_size < size || alloc_size > INT_MAX)
+		return -ENOMEM;
+	set = kvzalloc(alloc_size, GFP_KERNEL_ACCOUNT);                     // (16)
+	if (!set)
+		return -ENOMEM;
+
+	name = nla_strdup(nla[NFTA_SET_NAME], GFP_KERNEL_ACCOUNT);
+	if (!name) {
+		err = -ENOMEM;
+		goto err_set_name;
+	}
+
+	err = nf_tables_set_alloc_name(&ctx, set, name);                    // (17)
+	kfree(name);
+	if (err < 0)
+		goto err_set_name;
+
+	udata = NULL;
+	if (udlen) {                                                        // (18)
+		udata = set->data + size;
+		nla_memcpy(udata, nla[NFTA_SET_USERDATA], udlen);
+	}
+
+	INIT_LIST_HEAD(&set->bindings);
+	INIT_LIST_HEAD(&set->catchall_list);
+	set->table = table;
+	write_pnet(&set->net, net);
+	set->ops = ops;
+	set->ktype = ktype;
+	set->klen = desc.klen;
+	set->dtype = dtype;
+	set->objtype = objtype;
+	set->dlen = desc.dlen;
+	set->flags = flags;
+	set->size = desc.size;
+	set->policy = policy;
+	set->udlen = udlen;
+	set->udata = udata;
+	set->timeout = timeout;
+	set->gc_int = gc_int;
+
+	set->field_count = desc.field_count;
+	for (i = 0; i < desc.field_count; i++)
+		set->field_len[i] = desc.field_len[i];
+
+	err = ops->init(set, &desc, nla);                       // (19)
+	if (err < 0)
+		goto err_set_init;
+
+	if (nla[NFTA_SET_EXPR]) {                               // (20)
+		expr = nft_set_elem_expr_alloc(&ctx, set, nla[NFTA_SET_EXPR]);
+		if (IS_ERR(expr)) {
+			err = PTR_ERR(expr);
+			goto err_set_expr_alloc;
+		}
+		set->exprs[0] = expr;
+		set->num_exprs++;
+	} else if (nla[NFTA_SET_EXPRESSIONS]) {
+		struct nft_expr *expr;
+		struct nlattr *tmp;
+		int left;
+
+		if (!(flags & NFT_SET_EXPR)) {
+			err = -EINVAL;
+			goto err_set_expr_alloc;
+		}
+		i = 0;
+		nla_for_each_nested(tmp, nla[NFTA_SET_EXPRESSIONS], left) {
+			if (i == NFT_SET_EXPR_MAX) {
+				err = -E2BIG;
+				goto err_set_expr_alloc;
+			}
+			if (nla_type(tmp) != NFTA_LIST_ELEM) {
+				err = -EINVAL;
+				goto err_set_expr_alloc;
+			}
+			expr = nft_set_elem_expr_alloc(&ctx, set, tmp);
+			if (IS_ERR(expr)) {
+				err = PTR_ERR(expr);
+				goto err_set_expr_alloc;
+			}
+			set->exprs[i++] = expr;
+			set->num_exprs++;
+		}
+	}
+
+	set->handle = nf_tables_alloc_handle(table);                // (21)
+
+	err = nft_trans_set_add(&ctx, NFT_MSG_NEWSET, set);         // (22)
+	if (err < 0)
+		goto err_set_expr_alloc;
+
+	list_add_tail_rcu(&set->list, &table->sets);
+	table->use++;
+	return 0;
+
+err_set_expr_alloc:
+	for (i = 0; i < set->num_exprs; i++)
+		nft_expr_destroy(&ctx, set->exprs[i]);
+
+	ops->destroy(set);
+err_set_init:
+	kfree(set->name);
+err_set_name:
+	kvfree(set);
+	return err;
+}
+```
+
+(0)에서 set 생성에 반드시 필요한 `NFTA_SET_TABLE`, `NFTA_SET_NAME`, `NFTA_SET_KEY_LEN`, `NFTA_SET_ID` 속성이 모두 있는지 확인합니다.
+
+(1)에서 키 타입을 검사합니다. set의 키 타입에는 `NFT_DATA_VALUE`만 허용됩니다. `NFT_DATA_RESERVED_MASK`는 `NFT_DATA_VERDICT`와 동일한 값(`0xffffff00U`)이므로, 해당 마스크가 적용된 값이 `NFT_DATA_RESERVED_MASK`와 같다면 verdict 타입을 의미하는 것으로 간주하고 에러를 반환합니다.
+
+(2)에서 키의 길이가 0이거나 `NFT_DATA_VALUE_MAXLEN`을 초과하면 에러를 반환합니다.
+
+(3)에서 플래그를 검사합니다. 정의되지 않은 플래그가 있거나 `NFT_SET_MAP`과 `NFT_SET_OBJECT`, 또는 `NFT_SET_EVAL`과 `NFT_SET_OBJECT`가 동시에 설정된 경우 에러를 반환합니다.
+
+(4)에서 데이터 타입을 처리합니다. `NFTA_SET_DATA_TYPE`이 있는데 `NFT_SET_MAP` 플래그가 없는 경우 에러를 반환합니다. 데이터 타입이 `NFT_DATA_VALUE` 혹은 `NFT_DATA_VERDICT`가 아닌 경우에도 에러를 반환합니다. `NFT_DATA_VALUE`인 경우에는 `NFTA_SET_DATA_LEN`이 반드시 필요하며 길이 값도 검증합니다. `NFT_DATA_VERDICT`인 경우 `desc.dlen`을 `struct nft_verdict`의 크기로 고정합니다. `NFTA_SET_DATA_TYPE`이 없는데 `NFT_SET_MAP` 플래그가 있는 경우에도 에러를 반환합니다.
+
+(5)에서 오브젝트 타입을 처리합니다. `NFTA_SET_OBJ_TYPE`이 있는데 `NFT_SET_OBJECT` 플래그가 없거나, `NFT_SET_OBJECT` 플래그가 있는데 `NFTA_SET_OBJ_TYPE`이 없거나, 오브젝트 타입 값이 유효 범위를 벗어나면 에러를 반환합니다.
+
+(6)에서 타임아웃을 처리합니다. `NFTA_SET_TIMEOUT`이 있는데 `NFT_SET_TIMEOUT` 플래그가 없으면 에러를 반환합니다. 타임아웃 값을 밀리초에서 jiffies로 변환하여 저장합니다. GC 주기도 마찬가지로 `NFT_SET_TIMEOUT` 플래그가 없으면 에러를 반환하고, 있으면 값을 저장합니다.
+
+(7)에서 조회 성능 정책을 읽어옵니다. 기본값은 `NFT_SET_POL_PERFORMANCE`입니다. (8)에서 set 크기, 필드 수, 각 필드 길이 등 set 구조 기술자를 파싱합니다. (9)에서 표현식 관련 속성이 있으면 `desc.expr` 플래그를 설정합니다.
+
+(10)에서 대상 테이블을 찾고, (11)에서 트랜잭션 컨텍스트를 초기화합니다. (12)에서 동일한 이름의 set이 이미 존재하는지 확인합니다. 존재하는 경우 `nf_tables_newtable`과 마찬가지로 `NLM_F_EXCL`이면 에러, `NLM_F_REPLACE`는 미지원이므로 에러를 반환하며, 두 플래그 모두 없으면 그대로 반환합니다. set 업데이트는 테이블과 달리 별도 처리 없이 종료됩니다.
+
+(13)에서 set의 내부 구현 방식을 선택합니다. 이 함수는 플래그와 정책을 고려하여 해시, rbtree, bitmap 등 적합한 자료구조를 선택합니다.
+
+이후 (14)에서 유저데이터가 있으면 이후 set 할당 시 함께 복사할 수 있도록 길이를 저장해둡니다.
+
+(15)에서 `privsize`는 선택한 내부 구현체에서 사용할 공간의 크기입니다. 이후 이 크기를 이용해 내부 구현체를 초기화하게 됩니다. (16)에서 set 구조체와 `privsize`, 유저데이터 크기를 모두 합산하여 한 번에 할당합니다. (17)은 set에 이름을 할당하는 함수로, 유저가 이름 자동 할당을 요청한 경우 이를 처리합니다. (18)에서는 유저데이터가 있었다면 set 구조체의 `data` 필드 뒤에 이를 복사합니다. set 구조체를 살펴보겠습니다.
+
+```c
+struct nft_set {
+	struct list_head		list;
+	struct list_head		bindings;
+	struct nft_table		*table;
+	possible_net_t			net;
+	char				*name;
+	u64				handle;
+	u32				ktype;
+	u32				dtype;
+	u32				objtype;
+	u32				size;
+	u8				field_len[NFT_REG32_COUNT];
+	u8				field_count;
+	u32				use;
+	atomic_t			nelems;
+	u32				ndeact;
+	u64				timeout;
+	u32				gc_int;
+	u16				policy;
+	u16				udlen;
+	unsigned char			*udata;
+	/* runtime data below here */
+	const struct nft_set_ops	*ops ____cacheline_aligned;
+	u16				flags:14,
+					genmask:2;
+	u8				klen;
+	u8				dlen;
+	u8				num_exprs;
+	struct nft_expr			*exprs[NFT_SET_EXPR_MAX];
+	struct list_head		catchall_list;
+	unsigned char			data[]
+		__attribute__((aligned(__alignof__(u64))));
+};
+```
+
+`data` 필드는 구조체 맨 뒤에 위치하므로 유저데이터가 있다면 해당 위치에 저장됩니다. (19)는 내부 구현체를 초기화합니다. (15)에서 구했던 `privsize`가 여기서 사용됩니다. (20)은 표현식을 set에 할당합니다. (21)은 고유 번호를 부여합니다. (22)에서 트랜잭션 구조체를 할당하고 리스트에 추가합니다.
+
+### `nf_tables_newsetelem`
+
+```c
+static int nf_tables_newsetelem(struct sk_buff *skb,
+				const struct nfnl_info *info,
+				const struct nlattr * const nla[])
+{
+	struct nftables_pernet *nft_net = nft_pernet(info->net);
+	struct netlink_ext_ack *extack = info->extack;
+	u8 genmask = nft_genmask_next(info->net);
+	u8 family = info->nfmsg->nfgen_family;
+	struct net *net = info->net;
+	const struct nlattr *attr;
+	struct nft_table *table;
+	struct nft_set *set;
+	struct nft_ctx ctx;
+	int rem, err;
+
+	if (nla[NFTA_SET_ELEM_LIST_ELEMENTS] == NULL)                           // (0)
+		return -EINVAL;
+
+	table = nft_table_lookup(net, nla[NFTA_SET_ELEM_LIST_TABLE], family,    // (1)
+				 genmask, NETLINK_CB(skb).portid);
+	if (IS_ERR(table)) {
+		NL_SET_BAD_ATTR(extack, nla[NFTA_SET_ELEM_LIST_TABLE]);
+		return PTR_ERR(table);
+	}
+
+	set = nft_set_lookup_global(net, table, nla[NFTA_SET_ELEM_LIST_SET],    // (2)
+				    nla[NFTA_SET_ELEM_LIST_SET_ID], genmask);
+	if (IS_ERR(set))
+		return PTR_ERR(set);
+
+	if (!list_empty(&set->bindings) && set->flags & NFT_SET_CONSTANT)       // (3)
+		return -EBUSY;
+
+	nft_ctx_init(&ctx, net, skb, info->nlh, family, table, NULL, nla);      // (4)
+
+	nla_for_each_nested(attr, nla[NFTA_SET_ELEM_LIST_ELEMENTS], rem) {      // (5)
+		err = nft_add_set_elem(&ctx, set, attr, info->nlh->nlmsg_flags);
+		if (err < 0)
+			return err;
+	}
+
+	if (nft_net->validate_state == NFT_VALIDATE_DO)                         // (6)
+		return nft_table_validate(net, table);
+
+	return 0;
+}
+```
+
+(0)에서 추가할 원소 목록이 있는지 확인합니다. (1), (2)에서 원소를 추가할 테이블과 set을 가져옵니다. (3)은 set이 체인에 고정 상태로 바인드되어 있으면서 `NFT_SET_CONSTANT` 플래그가 설정된 경우를 검사합니다. 이 경우 원소를 추가할 수 없으므로 에러를 반환합니다. (4)는 이전 함수들에서와 같이 현재 컨텍스트를 담는 구조체를 초기화합니다. (5)에서는 반복문을 돌며 원소들을 하나씩 꺼내어 추가합니다. (6)은 표현식 검증이 필요한 경우 검증을 수행합니다. 이제 원소를 추가하는 `nft_add_set_elem` 함수를 살펴보겠습니다.
+
+```c
+static int nft_add_set_elem(struct nft_ctx *ctx, struct nft_set *set,
+			    const struct nlattr *attr, u32 nlmsg_flags)
+{
+	struct nft_expr *expr_array[NFT_SET_EXPR_MAX] = {};
+	struct nlattr *nla[NFTA_SET_ELEM_MAX + 1];
+	u8 genmask = nft_genmask_next(ctx->net);
+	u32 flags = 0, size = 0, num_exprs = 0;
+	struct nft_set_ext_tmpl tmpl;
+	struct nft_set_ext *ext, *ext2;
+	struct nft_set_elem elem;
+	struct nft_set_binding *binding;
+	struct nft_object *obj = NULL;
+	struct nft_userdata *udata;
+	struct nft_data_desc desc;
+	enum nft_registers dreg;
+	struct nft_trans *trans;
+	u64 timeout;
+	u64 expiration;
+	int err, i;
+	u8 ulen;
+
+	err = nla_parse_nested_deprecated(nla, NFTA_SET_ELEM_MAX, attr,                 // (0)
+					  nft_set_elem_policy, NULL);
+	if (err < 0)
+		return err;
+
+	nft_set_ext_prepare(&tmpl);                                                     // (1)
+
+	err = nft_setelem_parse_flags(set, nla[NFTA_SET_ELEM_FLAGS], &flags);           // (2)
+	if (err < 0)
+		return err;
+
+	if (!nla[NFTA_SET_ELEM_KEY] && !(flags & NFT_SET_ELEM_CATCHALL))                // (3)
+		return -EINVAL;
+
+	if (flags != 0)                                                                 // (4)
+		nft_set_ext_add(&tmpl, NFT_SET_EXT_FLAGS);
+
+	if (set->flags & NFT_SET_MAP) {                                                 // (5)
+		if (nla[NFTA_SET_ELEM_DATA] == NULL &&
+		    !(flags & NFT_SET_ELEM_INTERVAL_END))
+			return -EINVAL;
+	} else {
+		if (nla[NFTA_SET_ELEM_DATA] != NULL)
+			return -EINVAL;
+	}
+
+	if ((flags & NFT_SET_ELEM_INTERVAL_END) &&                                      // (6)
+	     (nla[NFTA_SET_ELEM_DATA] ||
+	      nla[NFTA_SET_ELEM_OBJREF] ||
+	      nla[NFTA_SET_ELEM_TIMEOUT] ||
+	      nla[NFTA_SET_ELEM_EXPIRATION] ||
+	      nla[NFTA_SET_ELEM_USERDATA] ||
+	      nla[NFTA_SET_ELEM_EXPR] ||
+	      nla[NFTA_SET_ELEM_EXPRESSIONS]))
+		return -EINVAL;
+
+	timeout = 0;
+	if (nla[NFTA_SET_ELEM_TIMEOUT] != NULL) {                                       // (7)
+		if (!(set->flags & NFT_SET_TIMEOUT))
+			return -EINVAL;
+		err = nf_msecs_to_jiffies64(nla[NFTA_SET_ELEM_TIMEOUT],
+					    &timeout);
+		if (err)
+			return err;
+	} else if (set->flags & NFT_SET_TIMEOUT) {
+		timeout = set->timeout;
+	}
+
+	expiration = 0;
+	if (nla[NFTA_SET_ELEM_EXPIRATION] != NULL) {                                    // (8)
+		if (!(set->flags & NFT_SET_TIMEOUT))
+			return -EINVAL;
+		err = nf_msecs_to_jiffies64(nla[NFTA_SET_ELEM_EXPIRATION],
+					    &expiration);
+		if (err)
+			return err;
+	}
+
+	if (nla[NFTA_SET_ELEM_EXPR]) {                                              // (9)
+		struct nft_expr *expr;
+
+		if (set->num_exprs && set->num_exprs != 1)
+			return -EOPNOTSUPP;
+
+		expr = nft_set_elem_expr_alloc(ctx, set,
+					       nla[NFTA_SET_ELEM_EXPR]);
+		if (IS_ERR(expr))
+			return PTR_ERR(expr);
+
+		expr_array[0] = expr;
+		num_exprs = 1;
+
+		if (set->num_exprs && set->exprs[0]->ops != expr->ops) {
+			err = -EOPNOTSUPP;
+			goto err_set_elem_expr;
+		}
+	} else if (nla[NFTA_SET_ELEM_EXPRESSIONS]) {
+		struct nft_expr *expr;
+		struct nlattr *tmp;
+		int left;
+
+		i = 0;
+		nla_for_each_nested(tmp, nla[NFTA_SET_ELEM_EXPRESSIONS], left) {
+			if (i == NFT_SET_EXPR_MAX ||
+			    (set->num_exprs && set->num_exprs == i)) {
+				err = -E2BIG;
+				goto err_set_elem_expr;
+			}
+			if (nla_type(tmp) != NFTA_LIST_ELEM) {
+				err = -EINVAL;
+				goto err_set_elem_expr;
+			}
+			expr = nft_set_elem_expr_alloc(ctx, set, tmp);
+			if (IS_ERR(expr)) {
+				err = PTR_ERR(expr);
+				goto err_set_elem_expr;
+			}
+			expr_array[i] = expr;
+			num_exprs++;
+
+			if (set->num_exprs && expr->ops != set->exprs[i]->ops) {
+				err = -EOPNOTSUPP;
+				goto err_set_elem_expr;
+			}
+			i++;
+		}
+		if (set->num_exprs && set->num_exprs != i) {
+			err = -EOPNOTSUPP;
+			goto err_set_elem_expr;
+		}
+	} else if (set->num_exprs > 0) {
+		err = nft_set_elem_expr_clone(ctx, set, expr_array);
+		if (err < 0)
+			goto err_set_elem_expr_clone;
+
+		num_exprs = set->num_exprs;
+	}
+
+	if (nla[NFTA_SET_ELEM_KEY]) {                                       // (10)
+		err = nft_setelem_parse_key(ctx, set, &elem.key.val,
+					    nla[NFTA_SET_ELEM_KEY]);
+		if (err < 0)
+			goto err_set_elem_expr;
+
+		nft_set_ext_add_length(&tmpl, NFT_SET_EXT_KEY, set->klen);
+	}
+
+	if (nla[NFTA_SET_ELEM_KEY_END]) {                                   // (11)
+		err = nft_setelem_parse_key(ctx, set, &elem.key_end.val,
+					    nla[NFTA_SET_ELEM_KEY_END]);
+		if (err < 0)
+			goto err_parse_key;
+
+		nft_set_ext_add_length(&tmpl, NFT_SET_EXT_KEY_END, set->klen);
+	}
+
+	if (timeout > 0) {                                                  // (12)
+		nft_set_ext_add(&tmpl, NFT_SET_EXT_EXPIRATION);
+		if (timeout != set->timeout)
+			nft_set_ext_add(&tmpl, NFT_SET_EXT_TIMEOUT);
+	}
+
+	if (num_exprs) {                                                    // (13)
+		for (i = 0; i < num_exprs; i++)
+			size += expr_array[i]->ops->size;
+
+		nft_set_ext_add_length(&tmpl, NFT_SET_EXT_EXPRESSIONS,
+				       sizeof(struct nft_set_elem_expr) +
+				       size);
+	}
+
+	if (nla[NFTA_SET_ELEM_OBJREF] != NULL) {                            // (14)
+		if (!(set->flags & NFT_SET_OBJECT)) {
+			err = -EINVAL;
+			goto err_parse_key_end;
+		}
+		obj = nft_obj_lookup(ctx->net, ctx->table,
+				     nla[NFTA_SET_ELEM_OBJREF],
+				     set->objtype, genmask);
+		if (IS_ERR(obj)) {
+			err = PTR_ERR(obj);
+			goto err_parse_key_end;
+		}
+		nft_set_ext_add(&tmpl, NFT_SET_EXT_OBJREF);
+	}
+
+	if (nla[NFTA_SET_ELEM_DATA] != NULL) {                                      // (15)
+		err = nft_setelem_parse_data(ctx, set, &desc, &elem.data.val,
+					     nla[NFTA_SET_ELEM_DATA]);
+		if (err < 0)
+			goto err_parse_key_end;
+
+		dreg = nft_type_to_reg(set->dtype);
+		list_for_each_entry(binding, &set->bindings, list) {
+			struct nft_ctx bind_ctx = {
+				.net	= ctx->net,
+				.family	= ctx->family,
+				.table	= ctx->table,
+				.chain	= (struct nft_chain *)binding->chain,
+			};
+
+			if (!(binding->flags & NFT_SET_MAP))
+				continue;
+
+			err = nft_validate_register_store(&bind_ctx, dreg,
+							  &elem.data.val,
+							  desc.type, desc.len);
+			if (err < 0)
+				goto err_parse_data;
+
+			if (desc.type == NFT_DATA_VERDICT &&
+			    (elem.data.val.verdict.code == NFT_GOTO ||
+			     elem.data.val.verdict.code == NFT_JUMP))
+				nft_validate_state_update(ctx->net,
+							  NFT_VALIDATE_NEED);
+		}
+
+		nft_set_ext_add_length(&tmpl, NFT_SET_EXT_DATA, desc.len);
+	}
+
+	/* The full maximum length of userdata can exceed the maximum
+	 * offset value (U8_MAX) for following extensions, therefor it
+	 * must be the last extension added.
+	 */
+	ulen = 0;
+	if (nla[NFTA_SET_ELEM_USERDATA] != NULL) {                  // (16)
+		ulen = nla_len(nla[NFTA_SET_ELEM_USERDATA]);
+		if (ulen > 0)
+			nft_set_ext_add_length(&tmpl, NFT_SET_EXT_USERDATA,
+					       ulen);
+	}
+
+	err = -ENOMEM;
+	elem.priv = nft_set_elem_init(set, &tmpl, elem.key.val.data,        // (17)
+				      elem.key_end.val.data, elem.data.val.data,
+				      timeout, expiration, GFP_KERNEL_ACCOUNT);
+	if (elem.priv == NULL)
+		goto err_parse_data;
+
+	ext = nft_set_elem_ext(set, elem.priv);                             // (18)
+	if (flags)
+		*nft_set_ext_flags(ext) = flags;
+	if (ulen > 0) {
+		udata = nft_set_ext_userdata(ext);
+		udata->len = ulen - 1;
+		nla_memcpy(&udata->data, nla[NFTA_SET_ELEM_USERDATA], ulen);
+	}
+	if (obj) {
+		*nft_set_ext_obj(ext) = obj;
+		obj->use++;
+	}
+	err = nft_set_elem_expr_setup(ctx, ext, expr_array, num_exprs);
+	if (err < 0)
+		goto err_elem_expr;
+
+	trans = nft_trans_elem_alloc(ctx, NFT_MSG_NEWSETELEM, set);         // (19)
+	if (trans == NULL) {
+		err = -ENOMEM;
+		goto err_elem_expr;
+	}
+
+	ext->genmask = nft_genmask_cur(ctx->net) | NFT_SET_ELEM_BUSY_MASK;
+
+	err = nft_setelem_insert(ctx->net, set, &elem, &ext2, flags);       // (20)
+	if (err) {
+		if (err == -EEXIST) {
+			if (nft_set_ext_exists(ext, NFT_SET_EXT_DATA) ^
+			    nft_set_ext_exists(ext2, NFT_SET_EXT_DATA) ||
+			    nft_set_ext_exists(ext, NFT_SET_EXT_OBJREF) ^
+			    nft_set_ext_exists(ext2, NFT_SET_EXT_OBJREF))
+				goto err_element_clash;
+			if ((nft_set_ext_exists(ext, NFT_SET_EXT_DATA) &&
+			     nft_set_ext_exists(ext2, NFT_SET_EXT_DATA) &&
+			     memcmp(nft_set_ext_data(ext),
+				    nft_set_ext_data(ext2), set->dlen) != 0) ||
+			    (nft_set_ext_exists(ext, NFT_SET_EXT_OBJREF) &&
+			     nft_set_ext_exists(ext2, NFT_SET_EXT_OBJREF) &&
+			     *nft_set_ext_obj(ext) != *nft_set_ext_obj(ext2)))
+				goto err_element_clash;
+			else if (!(nlmsg_flags & NLM_F_EXCL))
+				err = 0;
+		} else if (err == -ENOTEMPTY) {
+			/* ENOTEMPTY reports overlapping between this element
+			 * and an existing one.
+			 */
+			err = -EEXIST;
+		}
+		goto err_element_clash;
+	}
+
+	if (!(flags & NFT_SET_ELEM_CATCHALL) && set->size &&
+	    !atomic_add_unless(&set->nelems, 1, set->size + set->ndeact)) {
+		err = -ENFILE;
+		goto err_set_full;
+	}
+
+	nft_trans_elem(trans) = elem;
+	nft_trans_commit_list_add_tail(ctx->net, trans);                        // (21)
+	return 0;
+
+err_set_full:
+	nft_setelem_remove(ctx->net, set, &elem);
+err_element_clash:
+	kfree(trans);
+err_elem_expr:
+	if (obj)
+		obj->use--;
+
+	nf_tables_set_elem_destroy(ctx, set, elem.priv);
+err_parse_data:
+	if (nla[NFTA_SET_ELEM_DATA] != NULL)
+		nft_data_release(&elem.data.val, desc.type);
+err_parse_key_end:
+	nft_data_release(&elem.key_end.val, NFT_DATA_VALUE);
+err_parse_key:
+	nft_data_release(&elem.key.val, NFT_DATA_VALUE);
+err_set_elem_expr:
+	for (i = 0; i < num_exprs && expr_array[i]; i++)
+		nft_expr_destroy(ctx, expr_array[i]);
+err_set_elem_expr_clone:
+	return err;
+}
+```
+
+먼저, 하나의 원소는 아래와 같은 속성을 가질 수 있습니다.
+
+```c
+/**
+ * enum nft_set_elem_attributes - nf_tables set element netlink attributes
+ *
+ * @NFTA_SET_ELEM_KEY: key value (NLA_NESTED: nft_data)
+ * @NFTA_SET_ELEM_DATA: data value of mapping (NLA_NESTED: nft_data_attributes)
+ * @NFTA_SET_ELEM_FLAGS: bitmask of nft_set_elem_flags (NLA_U32)
+ * @NFTA_SET_ELEM_TIMEOUT: timeout value (NLA_U64)
+ * @NFTA_SET_ELEM_EXPIRATION: expiration time (NLA_U64)
+ * @NFTA_SET_ELEM_USERDATA: user data (NLA_BINARY)
+ * @NFTA_SET_ELEM_EXPR: expression (NLA_NESTED: nft_expr_attributes)
+ * @NFTA_SET_ELEM_OBJREF: stateful object reference (NLA_STRING)
+ * @NFTA_SET_ELEM_KEY_END: closing key value (NLA_NESTED: nft_data)
+ * @NFTA_SET_ELEM_EXPRESSIONS: list of expressions (NLA_NESTED: nft_list_attributes)
+ */
+enum nft_set_elem_attributes {
+	NFTA_SET_ELEM_UNSPEC,
+	NFTA_SET_ELEM_KEY,
+	NFTA_SET_ELEM_DATA,
+	NFTA_SET_ELEM_FLAGS,
+	NFTA_SET_ELEM_TIMEOUT,
+	NFTA_SET_ELEM_EXPIRATION,
+	NFTA_SET_ELEM_USERDATA,
+	NFTA_SET_ELEM_EXPR,
+	NFTA_SET_ELEM_PAD,
+	NFTA_SET_ELEM_OBJREF,
+	NFTA_SET_ELEM_KEY_END,
+	NFTA_SET_ELEM_EXPRESSIONS,
+	__NFTA_SET_ELEM_MAX
+};
+```
+
+(0)에서는 `nla_parse_nested_deprecated` 함수를 호출하여 원소 속성들을 지역 변수 `nla` 배열에 파싱합니다. 이 함수를 살펴보겠습니다.
+
+```c
+int __nla_parse(struct nlattr **tb, int maxtype,
+		const struct nlattr *head, int len,
+		const struct nla_policy *policy, unsigned int validate,
+		struct netlink_ext_ack *extack)
+{
+	return __nla_validate_parse(head, len, maxtype, policy, validate,
+				    extack, tb, 0);
+}
+
+static inline int nla_parse_nested_deprecated(struct nlattr *tb[], int maxtype,
+					      const struct nlattr *nla,
+					      const struct nla_policy *policy,
+					      struct netlink_ext_ack *extack)
+{
+	return __nla_parse(tb, maxtype, nla_data(nla), nla_len(nla), policy,
+			   NL_VALIDATE_LIBERAL, extack);
+}
+```
+
+이 함수는 결국 `__nla_validate_parse`를 호출합니다.
+
+```c
+static int __nla_validate_parse(const struct nlattr *head, int len, int maxtype,
+				const struct nla_policy *policy,
+				unsigned int validate,
+				struct netlink_ext_ack *extack,
+				struct nlattr **tb, unsigned int depth)
+{
+	const struct nlattr *nla;
+	int rem;
+
+	if (depth >= MAX_POLICY_RECURSION_DEPTH) {                  // (0)
+		NL_SET_ERR_MSG(extack,
+			       "allowed policy recursion depth exceeded");
+		return -EINVAL;
+	}
+
+	if (tb)
+		memset(tb, 0, sizeof(struct nlattr *) * (maxtype + 1));
+
+	nla_for_each_attr(nla, head, len, rem) {                    // (1)
+		u16 type = nla_type(nla);
+
+		if (type == 0 || type > maxtype) {
+			if (validate & NL_VALIDATE_MAXTYPE) {
+				NL_SET_ERR_MSG_ATTR(extack, nla,
+						    "Unknown attribute type");
+				return -EINVAL;
+			}
+			continue;
+		}
+		if (policy) {
+			int err = validate_nla(nla, maxtype, policy,        // (2)
+					       validate, extack, depth);
+
+			if (err < 0)
+				return err;
+		}
+
+		if (tb)
+			tb[type] = (struct nlattr *)nla;
+	}
+
+	if (unlikely(rem > 0)) {
+		pr_warn_ratelimited("netlink: %d bytes leftover after parsing attributes in process `%s'.\n",
+				    rem, current->comm);
+		NL_SET_ERR_MSG(extack, "bytes leftover after parsing attributes");
+		if (validate & NL_VALIDATE_TRAILING)
+			return -EINVAL;
+	}
+
+	return 0;
+}
+```
+
+(0)에서 재귀 깊이를 제한합니다. 이 함수는 (2)에서 재귀적으로 호출될 수 있는데, 악의적인 요청에 의해 재귀가 지나치게 깊어지는 것을 방지합니다. (1)은 원소 속성들을 하나씩 가져와 검사하고 배열에 담습니다. (2)는 속성들이 정책에 맞는 형식을 갖추고 있는지 검사합니다.
+
+다시 `nft_add_set_elem` 함수로 돌아가서, (1)에서 `struct nft_set_ext`를 위한 사전 준비를 하는 `nft_set_ext_prepare` 함수를 호출합니다. 먼저 `struct nft_set_ext_tmpl`과 `struct nft_set_ext`를 살펴보겠습니다.
+
+```c
+struct nft_set_ext_tmpl {
+	u16	len;
+	u8	offset[NFT_SET_EXT_NUM];
+};
+
+struct nft_set_ext {
+	u8	genmask;
+	u8	offset[NFT_SET_EXT_NUM];
+	char	data[];
+};
+```
+
+`struct nft_set_ext_tmpl`은 `struct nft_set_ext`를 할당하기 전에 임시로 사용하는 구조체입니다. 원소의 속성들 크기를 모두 파악해야 `nft_set_ext`를 할당할 수 있으므로, 그 이전까지 임시로 크기와 오프셋을 누적합니다. `len`에 전체 크기를 합산하고, 속성들은 메모리에 연속적으로 배치되므로 `offset` 배열에 각 속성의 시작 오프셋을 저장합니다.
+
+함수를 살펴보겠습니다.
+
+```c
+static inline void nft_set_ext_prepare(struct nft_set_ext_tmpl *tmpl)
+{
+	memset(tmpl, 0, sizeof(*tmpl));
+	tmpl->len = sizeof(struct nft_set_ext);
+}
+```
+
+구조체를 0으로 초기화하고 초기 길이를 헤더 크기로 설정합니다.
+
+다시 돌아가서, (2)에서는 플래그 속성을 변수 `flags`에 파싱하고 유효성도 검사합니다. 유효하지 않은 플래그가 있으면 에러를 반환합니다. (3)은 키가 없으면서 CATCHALL 원소도 아닌 경우 에러를 반환합니다. CATCHALL 원소는 다른 원소들과 매칭되지 않는 나머지 전부를 키로 지정하는 특수 원소입니다. (4)에서는 플래그가 있었다면 플래그를 저장할 공간 크기만큼 템플릿 합산 크기에 추가합니다. `nft_set_ext_add` 함수를 살펴보겠습니다.
+
+```c
+static inline void nft_set_ext_add_length(struct nft_set_ext_tmpl *tmpl, u8 id,
+					  unsigned int len)
+{
+	tmpl->len	 = ALIGN(tmpl->len, nft_set_ext_types[id].align);
+	BUG_ON(tmpl->len > U8_MAX);
+	tmpl->offset[id] = tmpl->len;
+	tmpl->len	+= nft_set_ext_types[id].len + len;
+}
+
+static inline void nft_set_ext_add(struct nft_set_ext_tmpl *tmpl, u8 id)
+{
+	nft_set_ext_add_length(tmpl, id, 0);
+}
+```
+
+오프셋을 저장하고 크기를 누적합니다. 플래그는 1바이트 공간이 필요하므로 1이 더해집니다.
+
+다시 돌아가서, (5)에서는 set이 map 형식인 경우 data가 없고 구간 끝 플래그도 없다면 에러를 반환합니다. 반대로 map이 아닌데 데이터가 포함되었다면 에러를 반환합니다. (6)에서는 구간 끝 플래그가 존재하면서 함께 존재할 수 없는 속성들이 있는지 확인합니다. (7)에서는 원소의 타임아웃이 있는 경우 검사하고 값을 가져옵니다. 원소에 타임아웃은 없지만 set에 타임아웃이 지정되어 있는 경우에는 그 값을 사용합니다. (8)에서는 원소의 만료 시간이 있으면 검사하고 값을 가져옵니다. 만료 시간은 타임아웃 중 남은 시간을 의미합니다. (9)는 표현식 속성이 있으면 검사 후 할당합니다. 속성이 없더라도 set 자체에 표현식이 있으면 복제하여 할당합니다. 표현식 구조체의 주소들은 지역 변수로 선언된 `expr_array` 배열에 저장됩니다.
+
+(10)에서는 키를 파싱하고 템플릿 합산 크기에 키 크기를 더하며 오프셋을 저장합니다. (11)은 범위를 지정하는 원소인 경우 끝점 역할의 키를 (10)과 동일하게 처리합니다. (12)에서는 타임아웃이 있는 경우 타임아웃과 만료 시간에 필요한 크기를 더하고 오프셋을 저장합니다. (13)에서는 표현식이 있는 경우 표현식에 필요한 크기를 더하고 오프셋을 저장합니다. (14)에서는 공유 객체 참조가 있는 경우 객체를 찾고 마찬가지로 크기와 오프셋을 저장합니다.
+
+(15)에서는 먼저 data 속성을 파싱한 후, 이 set을 사용하는 체인들에서 데이터 값이 적절한지 검사하고 검증 상태를 업데이트합니다. 이후 템플릿에 데이터 길이를 더하고 오프셋을 저장합니다. `nft_setelem_parse_data` 함수를 살펴보겠습니다.
+
+```c
+static int nft_setelem_parse_data(struct nft_ctx *ctx, struct nft_set *set,
+				  struct nft_data_desc *desc,
+				  struct nft_data *data,
+				  struct nlattr *attr)
+{
+	int err;
+
+	err = nft_data_init(ctx, data, NFT_DATA_VALUE_MAXLEN, desc, attr);		// (0)
+	if (err < 0)
+		return err;
+
+	if (desc->type != NFT_DATA_VERDICT && desc->len != set->dlen) {		// (1)
+		nft_data_release(data, desc->type);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+```
+
+(0)에서 데이터를 파싱합니다. `NFT_DATA_VALUE_MAXLEN`은 데이터 값의 최대 크기를 나타내는 매크로로 64입니다. (1)에서 유효성을 검사합니다. verdict 타입이 아닌데 데이터의 크기가 set 생성 시 정해진 데이터 크기와 다르면 에러를 반환합니다. `nft_data_init` 함수를 살펴보겠습니다.
+
+```c
+int nft_data_init(const struct nft_ctx *ctx,
+		  struct nft_data *data, unsigned int size,
+		  struct nft_data_desc *desc, const struct nlattr *nla)
+{
+	struct nlattr *tb[NFTA_DATA_MAX + 1];
+	int err;
+
+	err = nla_parse_nested_deprecated(tb, NFTA_DATA_MAX, nla,		// (0)
+					  nft_data_policy, NULL);
+	if (err < 0)
+		return err;
+
+	if (tb[NFTA_DATA_VALUE])								// (1)
+		return nft_value_init(ctx, data, size, desc,
+				      tb[NFTA_DATA_VALUE]);
+	if (tb[NFTA_DATA_VERDICT] && ctx != NULL)
+		return nft_verdict_init(ctx, data, desc, tb[NFTA_DATA_VERDICT]);
+	return -EINVAL;
+}
+```
+
+(0)에서 배열 `tb`에 파싱한 후, (1)에서 데이터 타입에 따라 분기합니다. `nft_value_init`과 `nft_verdict_init`를 살펴보겠습니다.
+
+```c
+static int nft_value_init(const struct nft_ctx *ctx,
+			  struct nft_data *data, unsigned int size,
+			  struct nft_data_desc *desc, const struct nlattr *nla)
+{
+	unsigned int len;
+
+	len = nla_len(nla);
+	if (len == 0)
+		return -EINVAL;
+	if (len > size)
+		return -EOVERFLOW;
+
+	nla_memcpy(data->data, nla, len);
+	desc->type = NFT_DATA_VALUE;
+	desc->len  = len;
+	return 0;
+}
+```
+
+nla의 value 부분을 원소 구조체 `data`에 복사하고, `desc`에 복사한 크기와 데이터 유형을 저장합니다.
+
+```c
+static int nft_verdict_init(const struct nft_ctx *ctx, struct nft_data *data,
+			    struct nft_data_desc *desc, const struct nlattr *nla)
+{
+	u8 genmask = nft_genmask_next(ctx->net);
+	struct nlattr *tb[NFTA_VERDICT_MAX + 1];
+	struct nft_chain *chain;
+	int err;
+
+	err = nla_parse_nested_deprecated(tb, NFTA_VERDICT_MAX, nla,
+					  nft_verdict_policy, NULL);
+	if (err < 0)
+		return err;
+
+	if (!tb[NFTA_VERDICT_CODE])
+		return -EINVAL;
+	data->verdict.code = ntohl(nla_get_be32(tb[NFTA_VERDICT_CODE]));
+
+	switch (data->verdict.code) {
+	default:
+		switch (data->verdict.code & NF_VERDICT_MASK) {
+		case NF_ACCEPT:
+		case NF_DROP:
+		case NF_QUEUE:
+			break;
+		default:
+			return -EINVAL;
+		}
+		fallthrough;
+	case NFT_CONTINUE:
+	case NFT_BREAK:
+	case NFT_RETURN:
+		break;
+	case NFT_JUMP:
+	case NFT_GOTO:
+		if (tb[NFTA_VERDICT_CHAIN]) {
+			chain = nft_chain_lookup(ctx->net, ctx->table,
+						 tb[NFTA_VERDICT_CHAIN],
+						 genmask);
+		} else if (tb[NFTA_VERDICT_CHAIN_ID]) {
+			chain = nft_chain_lookup_byid(ctx->net,
+						      tb[NFTA_VERDICT_CHAIN_ID]);
+			if (IS_ERR(chain))
+				return PTR_ERR(chain);
+		} else {
+			return -EINVAL;
+		}
+
+		if (IS_ERR(chain))
+			return PTR_ERR(chain);
+		if (nft_is_base_chain(chain))
+			return -EOPNOTSUPP;
+
+		chain->use++;
+		data->verdict.chain = chain;
+		break;
+	}
+
+	desc->len = sizeof(data->verdict);
+	desc->type = NFT_DATA_VERDICT;
+	return 0;
+}
+```
+
+verdict는 중첩 파싱 후 원소 구조체 `data`에 코드를 저장합니다. 코드가 점프 명령어인 경우 대상 체인을 찾아 검증하고 저장합니다. `desc`에 크기와 타입도 저장합니다. verdict 타입의 길이는 `sizeof(struct nft_verdict)`, 즉 16바이트로 고정됩니다.
+
+다시 돌아가서, (16)에서는 유저데이터 속성이 있으면 크기를 템플릿 합산 크기에 더하고 오프셋을 저장합니다. (17)에서 원소를 할당합니다. `nft_set_elem_init` 함수를 살펴보겠습니다.
+
+```c
+void *nft_set_elem_init(const struct nft_set *set,
+			const struct nft_set_ext_tmpl *tmpl,
+			const u32 *key, const u32 *key_end,
+			const u32 *data, u64 timeout, u64 expiration, gfp_t gfp)
+{
+	struct nft_set_ext *ext;
+	void *elem;
+
+	elem = kzalloc(set->ops->elemsize + tmpl->len, gfp);		// (0)
+	if (elem == NULL)
+		return NULL;
+
+	ext = nft_set_elem_ext(set, elem);						// (1)
+	nft_set_ext_init(ext, tmpl);
+
+	if (nft_set_ext_exists(ext, NFT_SET_EXT_KEY))				// (2)	
+		memcpy(nft_set_ext_key(ext), key, set->klen);
+	if (nft_set_ext_exists(ext, NFT_SET_EXT_KEY_END))
+		memcpy(nft_set_ext_key_end(ext), key_end, set->klen);
+	if (nft_set_ext_exists(ext, NFT_SET_EXT_DATA))
+		memcpy(nft_set_ext_data(ext), data, set->dlen);
+	if (nft_set_ext_exists(ext, NFT_SET_EXT_EXPIRATION)) {
+		*nft_set_ext_expiration(ext) = get_jiffies_64() + expiration;
+		if (expiration == 0)
+			*nft_set_ext_expiration(ext) += timeout;
+	}
+	if (nft_set_ext_exists(ext, NFT_SET_EXT_TIMEOUT))
+		*nft_set_ext_timeout(ext) = timeout;
+
+	return elem;
+}
+```
+
+`set->ops->elemsize`는 set 생성 시 선택된 내부 구현체가 원소마다 필요로 하는 내부 공간 크기입니다. (0)에서 이 크기와 지금까지 속성들에 필요한 크기의 합산으로 원소를 할당합니다. (1)에서 `elem + set->ops->elemsize`를 반환하여 `ext`의 시작 주소를 가져옵니다. 이후 `ext`를 초기화하는데, 해당 함수를 살펴보겠습니다.
+
+```c
+static inline void nft_set_ext_init(struct nft_set_ext *ext,
+				    const struct nft_set_ext_tmpl *tmpl)
+{
+	memcpy(ext->offset, tmpl->offset, sizeof(ext->offset));
+}
+```
+
+템플릿에 지금까지 저장해둔 속성들의 오프셋을 모두 복사합니다. 
+
+다시 `nft_set_elem_init` 함수로 돌아가서, (2)부터는 복사된 오프셋 값들로 속성의 존재 여부를 확인한 후, 존재하는 속성들을 모두 `elem`에 복사합니다.
+
+다시 `nft_add_set_elem` 함수로 돌아가서, (18)에서 `elem`의 `ext`를 가져온 뒤 플래그, 유저데이터, 오브젝트, 표현식을 복사합니다. (19)에서 트랜잭션을 생성하고, (20)에서 생성한 원소를 set에 삽입한 뒤, (21)에서 트랜잭션을 커밋 리스트에 추가합니다. (20)에서 호출한 `nft_setelem_insert` 함수를 살펴보겠습니다.
+
+```c
+static int nft_setelem_insert(const struct net *net,
+			      struct nft_set *set,
+			      const struct nft_set_elem *elem,
+			      struct nft_set_ext **ext, unsigned int flags)
+{
+	int ret;
+
+	if (flags & NFT_SET_ELEM_CATCHALL)
+		ret = nft_setelem_catchall_insert(net, set, elem, ext);
+	else
+		ret = set->ops->insert(net, set, elem, ext);
+
+	return ret;
+}
+```
+
+set에 원소를 삽입하는 동작은 CATCHALL 원소인지 여부에 따라 분기됩니다. CATCHALL이 아닌 경우, set 생성 시 선택된 구현체의 삽입 함수를 호출합니다. CATCHALL 원소일 때 호출되는 `nft_setelem_catchall_insert` 함수를 살펴보겠습니다.
+
+```c
+static int nft_setelem_catchall_insert(const struct net *net,
+				       struct nft_set *set,
+				       const struct nft_set_elem *elem,
+				       struct nft_set_ext **pext)
+{
+	struct nft_set_elem_catchall *catchall;
+	u8 genmask = nft_genmask_next(net);
+	struct nft_set_ext *ext;
+
+	list_for_each_entry(catchall, &set->catchall_list, list) {      // (0)
+		ext = nft_set_elem_ext(set, catchall->elem);
+		if (nft_set_elem_active(ext, genmask)) {
+			*pext = ext;
+			return -EEXIST;
+		}
+	}
+
+	catchall = kmalloc(sizeof(*catchall), GFP_KERNEL);
+	if (!catchall)
+		return -ENOMEM;
+
+	catchall->elem = elem->priv;
+	list_add_tail_rcu(&catchall->list, &set->catchall_list);
+
+	return 0;
+}
+```
+
+CATCHALL은 그 외의 전부를 의미하므로, 하나의 set 안에 활성화된 CATCHALL 원소는 하나만 존재할 수 있습니다. 다만 새 원소로 교체할 때 기존 원소가 현재 사용 중이라면 즉시 해제할 수 없어 리스트가 필요합니다.
+
+(0)에서는 set에 현재 활성화된 CATCHALL 원소가 이미 존재하는지 검사합니다. 존재한다면 해당 원소의 `ext`를 외부 포인터 `pext`에 저장하고 에러를 반환합니다. 활성화된 CATCHALL 원소가 없다면 구조체를 할당하고 리스트에 추가합니다.
