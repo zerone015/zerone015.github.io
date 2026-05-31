@@ -194,7 +194,7 @@ void OperateSwitch() {
 
 우선 쉘을 획득하려면 libc base를 leak해야 하는데 No PIE이므로 `ptr`이 GOT entry를 가리키도록 증가시킨 후 출력 연산으로 leak하면 된다. 이후 페이로드를 재전송하기 위해서 `puts@got`를 `main`으로 덮어 ret2main 하면 된다. 두 번째 페이로드 구성 단계에서 처음에는 `puts@got`를 원가젯으로 덮는 시도를 했으나 제약 조건이 맞는 가젯이 없어 실패했다. 그래서 어셈블리 코드를 살펴보다가 `Init` 함수에서 다음 코드를 발견했다.
 
-```asm
+```gdb
 pwndbg> x/50i 0x401267
    0x401267:    endbr64
    0x40126b:    push   rbp
