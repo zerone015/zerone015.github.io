@@ -2,7 +2,7 @@
 title: "holymoly writeup"
 date: 2026-06-01 00:00:00 +0900
 categories: [Wargame, Dreamhack]
-tags: [pwn, rop, got-overwrite, ret2main, dreamhack]
+tags: [pwn, got-overwrite, ret2main, dreamhack]
 ---
 
 ## Analysis
