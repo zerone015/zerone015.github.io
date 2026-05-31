@@ -1069,15 +1069,15 @@ static void nfnetlink_rcv_skb_batch(struct sk_buff *skb, struct nlmsghdr *nlh)
 }
 ```
 
-먼저 netlink 헤더의 `nlmsg_len` 값을 정렬한 뒤, 정렬된 크기가 소켓 버퍼 길이를 초과하면 버퍼 길이에 맞게 조정합니다. 소켓 버퍼가 너무 작으면 처리 없이 반환합니다. (0)의 `nla_parse_deprecated`는 배치 메시지의 `nlattr`를 정책에 따라 `cda` 배열에 파싱하는데, 배치 메시지에 `nlattr`가 없는 경우에는 해당되지 않습니다. 이후 (1)에서 `nlmsg_data`로 배치 메시지의 `nfgenmsg` 헤더를 읽어온 뒤, `skb_pull`을 호출하여 소켓 버퍼가 배치 메시지 다음 메시지를 가리키도록 합니다. `res_id`가 `NFNL_SUBSYS_NFTABLES`인 경우를 제외하고 엔디안 변환 후 `nfnetlink_rcv_batch`를 호출합니다.
+먼저 netlink 헤더의 `nlmsg_len` 값을 정렬하여 소켓 버퍼 길이를 초과하면 버퍼 길이에 맞게 조정하고, 버퍼 자체가 너무 작으면 처리 없이 반환합니다. 이어서 (0)에서 배치 메시지에 첨부된 `nlattr`를 정책에 따라 `cda` 배열에 파싱하는데, 배치 메시지에 `nlattr`가 없다면 이 단계는 그냥 넘어갑니다. 다음으로 (1)에서는 `nlmsg_data`로 배치 메시지의 `nfgenmsg` 헤더를 읽어오고, `skb_pull`로 소켓 버퍼 포인터를 배치 메시지 직후로 전진시켜 이후 `nfnetlink_rcv_batch`에서 나머지 명령 메시지들을 순서대로 꺼낼 수 있게 준비합니다. 마지막으로 `res_id`를 엔디안 변환한 뒤 `nfnetlink_rcv_batch`를 호출합니다.
 
 `nfnetlink_rcv_batch`의 핵심 코드만 발췌하여 살펴보겠습니다.
 
 ```c
-    const struct nfnetlink_subsystem *ss;           // (0)
+    const struct nfnetlink_subsystem *ss;           
     const struct nfnl_callback *nc;
     ...
-    ss = nfnl_dereference_protected(subsys_id);
+    ss = nfnl_dereference_protected(subsys_id);			// (0)
     ...
     while (skb->len >= nlmsg_total_size(0)) {
         ...
@@ -1134,7 +1134,7 @@ done:
     }
 ```
 
-(0)에서 `subsys_id`에 해당하는 `nfnetlink_subsystem`을 참조합니다. (1)에서 해당 서브시스템에서 메시지 타입에 맞는 `nfnl_callback` 구조체를 찾습니다. 이 구조체의 `call` 필드에 해당 메시지를 처리할 콜백 함수가 저장되어 있습니다. (2)에서 콜백 함수의 유형이 `NFNL_CB_BATCH`인지 검사합니다. 유형이 맞다면 필요한 정보들을 구조화하고, (3)에서 `nlattr`들을 `cda` 배열에 파싱한 뒤, (4)에서 콜백 함수를 호출합니다. 트랜잭션 내 모든 메시지가 성공적으로 처리되면 (5)에서 커밋 콜백 함수가 호출되어 모든 요청이 반영됩니다.
+(0)에서 `subsys_id`로 해당 `nfnetlink_subsystem`을 참조한 뒤, 소켓 버퍼에 남은 메시지들을 반복문으로 하나씩 처리합니다. 각 메시지마다 (1)에서 메시지 타입으로 `nfnl_callback` 구조체를 찾아오는데, 이 구조체의 `call` 필드에 실제 처리 로직을 담은 콜백 함수가 저장되어 있습니다. 찾아온 콜백의 유형을 (2)에서 `NFNL_CB_BATCH`인지 확인하고 통과하면 현재 메시지 정보를 `nfnl_info`로 구조화합니다. 이어 (3)에서 메시지에 포함된 `nlattr`들을 `cda` 배열에 파싱하고 나면, (4)에서 콜백 함수를 호출해 실제 처리를 수행합니다. 반복문이 끝나고 트랜잭션 내 모든 메시지가 성공적으로 처리됐다면 (5)에서 커밋 콜백 함수가 호출되어 모든 변경 사항이 최종 반영됩니다.
 
 ## nftables
 
