@@ -1,7 +1,7 @@
 ---
 title: "Secure Service writeup"
 date: 2026-05-06 23:00:00 +0900
-categories: [Wargame, Dreamhack]
+categories: [Wargame, Dreamhack, Pwnable]
 tags: [pwn, seccomp, dreamhack]
 ---
 

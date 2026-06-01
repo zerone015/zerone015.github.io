@@ -1,7 +1,7 @@
 ---
 title: "nullnull writeup"
 date: 2026-05-06 00:20:00 +0900
-categories: [Wargame, Dreamhack]
+categories: [Wargame, Dreamhack, Pwnable]
 tags: [pwn, rop, off-by-one, dreamhack]
 ---
 

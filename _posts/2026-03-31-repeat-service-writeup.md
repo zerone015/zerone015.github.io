@@ -1,7 +1,7 @@
 ---
 title: "Repeat Service writeup"
 date: 2026-03-31 00:00:00 +0900
-categories: [Wargame, Dreamhack]
+categories: [Wargame, Dreamhack, Pwnable]
 tags: [pwn, bof, canary, pie, dreamhack]
 ---
 

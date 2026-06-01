@@ -1,7 +1,7 @@
 ---
 title: "xrop writeup"
 date: 2026-04-02 10:00:00 +0900
-categories: [Wargame, Dreamhack]
+categories: [Wargame, Dreamhack, Pwnable]
 tags: [pwn, bof, rop, canary, pie, dreamhack]
 ---
 

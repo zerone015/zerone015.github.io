@@ -1,7 +1,7 @@
 ---
 title: "XOR Board writeup"
 date: 2026-04-01 08:00:00 +0900
-categories: [Wargame, Dreamhack]
+categories: [Wargame, Dreamhack, Pwnable]
 tags: [pwn, oob, no-relro, fini_array, dreamhack]
 ---
 

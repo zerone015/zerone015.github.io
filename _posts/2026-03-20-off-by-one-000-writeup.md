@@ -1,7 +1,7 @@
 ---
 title: "off_by_one_000 writeup"
 date: 2026-03-21 02:30:00 +0900
-categories: [Wargame, Dreamhack]
+categories: [Wargame, Dreamhack, Pwnable]
 tags: [pwn, off_by_one, sfp_overwrite, dreamhack]
 ---
 

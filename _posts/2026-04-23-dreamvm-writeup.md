@@ -1,7 +1,7 @@
 ---
 title: "dreamvm writeup"
 date: 2026-04-23 22:57:00 +0900
-categories: [Wargame, Dreamhack]
+categories: [Wargame, Dreamhack, Pwnable]
 tags: [pwn, rop, oob, vm, dreamhack]
 ---
 

@@ -1,7 +1,7 @@
 ---
 title: "string writeup"
 date: 2026-04-07 09:00:00 +0900
-categories: [Wargame, Dreamhack]
+categories: [Wargame, Dreamhack, Pwnable]
 tags: [pwn, fsb, got-overwrite, dreamhack]
 ---
 

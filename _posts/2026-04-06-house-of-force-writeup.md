@@ -1,7 +1,7 @@
 ---
 title: "house_of_force writeup"
 date: 2026-04-06 04:47:00 +0900
-categories: [Wargame, Dreamhack]
+categories: [Wargame, Dreamhack, Pwnable]
 tags: [pwn, heap, house-of-force, got-overwrite, dreamhack]
 ---
 

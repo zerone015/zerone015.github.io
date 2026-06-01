@@ -1,7 +1,7 @@
 ---
 title: "cube writeup"
 date: 2026-04-08 07:57:00 +0900
-categories: [Wargame, Dreamhack]
+categories: [Wargame, Dreamhack, Pwnable]
 tags: [pwn, shellcode, chroot, dreamhack]
 ---
 

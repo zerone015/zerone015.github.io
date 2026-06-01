@@ -1,7 +1,7 @@
 ---
 title: "MSNW writeup"
 date: 2026-03-22 05:00:00 +0900
-categories: [Wargame, Dreamhack]
+categories: [Wargame, Dreamhack, Pwnable]
 tags: [pwn, sfp_overwrite, stack_leak, dreamhack]
 ---
 

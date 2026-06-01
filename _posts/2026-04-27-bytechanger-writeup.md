@@ -1,7 +1,7 @@
 ---
 title: "bytechanger writeup"
 date: 2026-04-27 01:40:00 +0900
-categories: [Wargame, Dreamhack]
+categories: [Wargame, Dreamhack, Pwnable]
 tags: [pwn, opcode, dreamhack]
 ---
 

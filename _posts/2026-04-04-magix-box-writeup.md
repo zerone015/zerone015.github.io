@@ -1,7 +1,7 @@
 ---
 title: "Magix Box writeup"
 date: 2026-04-04 05:00:00 +0900
-categories: [Wargame, Dreamhack]
+categories: [Wargame, Dreamhack, Pwnable]
 tags: [pwn, oob, rop, canary, ret2main, dreamhack]
 ---
 

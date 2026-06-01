@@ -1,7 +1,7 @@
 ---
 title: "Bunker Rush writeup"
 date: 2026-04-24 23:40:00 +0900
-categories: [Wargame, Dreamhack]
+categories: [Wargame, Dreamhack, Pwnable]
 tags: [pwn, heap, bof, top-chunk, dreamhack]
 ---
 
