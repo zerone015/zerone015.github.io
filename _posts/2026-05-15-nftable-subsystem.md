@@ -3,6 +3,7 @@ title: "nftable subsystem"
 date: 2026-05-15 01:00:00 +0900
 categories: [Linux Kernel]
 tags: [netlink, nfnetlink, nftable]
+published: false
 ---
 
 드림핵에서 리눅스 커널 해킹 패스를 수강하면서 CVE-2022-34918 관련 강의를 보는데, nftable 서브시스템에 대한 기반 지식이 부족해서 제대로 이해하기 어려웠습니다. 그래서 CVE-2022-34918을 본격적으로 분석하기에 앞서 nftable에 대해 먼저 정리하고자 합니다.
