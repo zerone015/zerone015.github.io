@@ -1,7 +1,7 @@
 ---
 title: "oob writeup"
 date: 2026-05-03 23:32:00 +0900
-categories: [Wargame, Dreamhack, Pwnable]
+categories: [Security, Wargame]
 tags: [pwn, rop, oob, dreamhack]
 ---
 

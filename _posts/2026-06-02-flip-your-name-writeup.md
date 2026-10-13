@@ -1,7 +1,7 @@
 ---
 title: "Flip Your Name writeup"
 date: 2026-06-02 00:00:00 +0900
-categories: [Wargame, Dreamhack, Pwnable]
+categories: [Security, Wargame]
 tags: [pwn, rop, stack-bof, bit-flip, dreamhack]
 ---
 

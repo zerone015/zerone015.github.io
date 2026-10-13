@@ -1,7 +1,7 @@
 ---
 title: "cpp_smart_pointer_1 writeup"
 date: 2026-04-02 07:00:00 +0900
-categories: [Wargame, Dreamhack, Pwnable]
+categories: [Security, Wargame]
 tags: [pwn, uaf, heap, cpp, dreamhack]
 ---
 

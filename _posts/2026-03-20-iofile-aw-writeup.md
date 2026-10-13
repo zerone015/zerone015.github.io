@@ -1,7 +1,7 @@
 ---
 title: "iofile_aw writeup"
 date: 2026-03-20 06:00:00 +0900
-categories: [Wargame, Dreamhack, Pwnable]
+categories: [Security, Wargame]
 tags: [pwn, io_file, arbitrary_write, dreamhack]
 ---
 

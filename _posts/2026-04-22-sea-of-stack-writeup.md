@@ -1,7 +1,7 @@
 ---
 title: "Sea of Stack writeup"
 date: 2026-04-22 20:30:00 +0900
-categories: [Wargame, Dreamhack, Pwnable]
+categories: [Security, Wargame]
 tags: [pwn, rop, bof, stack-pivot, dreamhack]
 ---
 

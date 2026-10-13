@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 370" width="460" height="370" font-family="'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#3B82C4"/>
+    </marker>
+  </defs>
+
+  <g stroke="#888888" stroke-width="2.5">
+    <line x1="160" y1="40" x2="160" y2="80"/>
+    <line x1="160" y1="140" x2="160" y2="210"/>
+    <line x1="160" y1="270" x2="160" y2="310"/>
+    <line x1="160" y1="175" x2="330" y2="175"/>
+    <line x1="140" y1="310" x2="180" y2="310"/>
+    <line x1="148" y1="318" x2="172" y2="318"/>
+    <line x1="156" y1="326" x2="164" y2="326"/>
+  </g>
+
+  <g fill="none" stroke="#3B82C4" stroke-width="2.5">
+    <rect x="148" y="80" width="24" height="60" rx="3"/>
+    <rect x="148" y="210" width="24" height="60" rx="3"/>
+  </g>
+  <text x="184" y="106" font-size="14" fill="#3B82C4" font-weight="bold">R1 10kΩ</text>
+  <text x="184" y="124" font-size="13" fill="#3B82C4">−1.1V</text>
+  <text x="184" y="236" font-size="14" fill="#3B82C4" font-weight="bold">R2 20kΩ</text>
+  <text x="184" y="254" font-size="13" fill="#3B82C4">−2.2V</text>
+
+  <line x1="120" y1="88" x2="120" y2="140" stroke="#3B82C4" stroke-width="2.5" marker-end="url(#arr)"/>
+  <text x="108" y="118" text-anchor="end" font-size="13" fill="#3B82C4" font-weight="bold">0.11mA</text>
+
+  <circle cx="160" cy="40" r="5" fill="#E8902A"/>
+  <text x="172" y="45" font-size="15" fill="#E8902A" font-weight="bold">Vin 3.3V</text>
+
+  <circle cx="160" cy="175" r="5" fill="#E8902A"/>
+  <circle cx="330" cy="175" r="5" fill="#E8902A"/>
+  <text x="342" y="180" font-size="15" fill="#E8902A" font-weight="bold">Vout 2.2V</text>
+
+  <text x="192" y="315" font-size="14" fill="#E8902A" font-weight="bold">GND 0V</text>
+
+  <text x="230" y="358" text-anchor="middle" font-size="14" fill="#888888">Vout = 3.3 × 20k / (10k + 20k) = 2.2V</text>
+</svg>

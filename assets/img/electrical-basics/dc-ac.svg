@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 424" width="560" height="424" font-family="'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif">
+  <g stroke="#888888" stroke-width="1" fill="none" stroke-dasharray="4 4">
+    <line x1="80" y1="80" x2="500" y2="80"/>
+    <line x1="80" y1="210" x2="500" y2="210"/>
+    <line x1="80" y1="370" x2="500" y2="370"/>
+  </g>
+
+  <text x="80" y="30" font-size="14" fill="#888888" font-weight="bold">DC</text>
+  <line x1="80" y1="50" x2="500" y2="50" stroke="#3B82C4" stroke-width="2.5"/>
+  <text x="72" y="54" text-anchor="end" font-size="12" fill="#888888">3.3V</text>
+  <text x="72" y="84" text-anchor="end" font-size="12" fill="#888888">0V</text>
+
+  <text x="80" y="132" font-size="14" fill="#888888" font-weight="bold">AC</text>
+  <path d="M80 210 C 105 150, 135 150, 160 210 S 215 270, 240 210 S 295 150, 320 210 S 375 270, 400 210 S 455 150, 480 210" fill="none" stroke="#3B82C4" stroke-width="2.5"/>
+  <text x="72" y="214" text-anchor="end" font-size="12" fill="#888888">0V</text>
+  <text x="72" y="168" text-anchor="end" font-size="12" fill="#888888">+</text>
+  <text x="72" y="258" text-anchor="end" font-size="12" fill="#888888">−</text>
+  <polyline points="160,278 160,285 320,285 320,278" fill="none" stroke="#E8902A" stroke-width="1.5"/>
+  <text x="240" y="302" text-anchor="middle" font-size="13" fill="#E8902A" font-weight="bold">Period T</text>
+
+  <text x="80" y="318" font-size="14" fill="#888888" font-weight="bold">Digital Signal</text>
+  <polyline points="80,370 80,330 140,330 140,370 200,370 200,330 260,330 260,370 320,370 320,330 380,330 380,370 440,370 440,330 500,330" fill="none" stroke="#3B82C4" stroke-width="2.5"/>
+  <text x="72" y="334" text-anchor="end" font-size="12" fill="#888888">3.3V</text>
+  <text x="72" y="374" text-anchor="end" font-size="12" fill="#888888">0V</text>
+  <polyline points="80,385 80,392 200,392 200,385" fill="none" stroke="#E8902A" stroke-width="1.5"/>
+  <text x="140" y="410" text-anchor="middle" font-size="13" fill="#E8902A" font-weight="bold">Period T</text>
+
+</svg>

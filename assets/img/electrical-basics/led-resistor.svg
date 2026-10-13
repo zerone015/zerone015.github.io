@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 390" width="460" height="390" font-family="'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#3B82C4"/>
+    </marker>
+    <marker id="lt" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#E8902A"/>
+    </marker>
+  </defs>
+
+  <g stroke="#888888" stroke-width="2.5">
+    <line x1="160" y1="40" x2="160" y2="80"/>
+    <line x1="160" y1="140" x2="160" y2="210"/>
+    <line x1="160" y1="270" x2="160" y2="320"/>
+    <line x1="140" y1="320" x2="180" y2="320"/>
+    <line x1="148" y1="328" x2="172" y2="328"/>
+    <line x1="156" y1="336" x2="164" y2="336"/>
+  </g>
+
+  <rect x="148" y="80" width="24" height="60" rx="3" fill="none" stroke="#3B82C4" stroke-width="2.5"/>
+  <text x="184" y="106" font-size="14" fill="#3B82C4" font-weight="bold">R 130Ω</text>
+  <text x="184" y="124" font-size="13" fill="#3B82C4">−1.3V</text>
+
+  <polygon points="138,210 182,210 160,252" fill="none" stroke="#3B82C4" stroke-width="2.5" stroke-linejoin="round"/>
+  <line x1="138" y1="256" x2="182" y2="256" stroke="#3B82C4" stroke-width="2.5"/>
+  <line x1="160" y1="256" x2="160" y2="270" stroke="#888888" stroke-width="2.5"/>
+  <line x1="190" y1="222" x2="210" y2="208" stroke="#E8902A" stroke-width="2" marker-end="url(#lt)"/>
+  <line x1="194" y1="238" x2="214" y2="224" stroke="#E8902A" stroke-width="2" marker-end="url(#lt)"/>
+  <text x="228" y="226" font-size="14" fill="#3B82C4" font-weight="bold">LED</text>
+  <text x="228" y="244" font-size="13" fill="#3B82C4">−2.0V (Vf)</text>
+  <text x="128" y="214" text-anchor="end" font-size="12" fill="#888888">Anode (+)</text>
+  <text x="128" y="262" text-anchor="end" font-size="12" fill="#888888">Cathode (−)</text>
+
+  <line x1="110" y1="88" x2="110" y2="140" stroke="#3B82C4" stroke-width="2.5" marker-end="url(#arr)"/>
+  <text x="98" y="118" text-anchor="end" font-size="13" fill="#3B82C4" font-weight="bold">If 10mA</text>
+
+  <circle cx="160" cy="40" r="5" fill="#E8902A"/>
+  <text x="172" y="45" font-size="15" fill="#E8902A" font-weight="bold">Vs 3.3V</text>
+  <circle cx="160" cy="175" r="5" fill="#E8902A"/>
+  <text x="172" y="180" font-size="14" fill="#E8902A" font-weight="bold">2.0V</text>
+  <text x="192" y="325" font-size="14" fill="#E8902A" font-weight="bold">GND 0V</text>
+
+  <text x="230" y="374" text-anchor="middle" font-size="14" fill="#888888">R = (Vs − Vf) / If = (3.3 − 2.0) / 10mA = 130Ω</text>
+</svg>

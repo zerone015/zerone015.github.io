@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 370" width="640" height="370" font-family="'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#3B82C4"/>
+    </marker>
+  </defs>
+
+  <g stroke="#888888" stroke-width="2.5">
+    <line x1="120" y1="40" x2="120" y2="80"/>
+    <line x1="120" y1="140" x2="120" y2="200"/>
+    <line x1="120" y1="220" x2="120" y2="290"/>
+    <line x1="100" y1="290" x2="140" y2="290"/>
+    <line x1="108" y1="298" x2="132" y2="298"/>
+    <line x1="116" y1="306" x2="124" y2="306"/>
+  </g>
+
+  <rect x="108" y="80" width="24" height="60" rx="3" fill="none" stroke="#3B82C4" stroke-width="2.5"/>
+  <text x="144" y="114" font-size="14" fill="#3B82C4" font-weight="bold">R</text>
+
+  <line x1="92" y1="200" x2="148" y2="200" stroke="#3B82C4" stroke-width="3.5"/>
+  <line x1="92" y1="220" x2="148" y2="220" stroke="#3B82C4" stroke-width="3.5"/>
+  <text x="160" y="205" font-size="13" fill="#E8902A" font-weight="bold">+ + +</text>
+  <text x="160" y="229" font-size="13" fill="#E8902A" font-weight="bold">− − −</text>
+  <text x="80" y="205" text-anchor="end" font-size="12" fill="#888888">Plate A</text>
+  <text x="80" y="229" text-anchor="end" font-size="12" fill="#888888">Plate B</text>
+  <text x="210" y="217" font-size="14" fill="#3B82C4" font-weight="bold">C</text>
+
+  <line x1="78" y1="88" x2="78" y2="140" stroke="#3B82C4" stroke-width="2.5" marker-end="url(#arr)"/>
+  <text x="68" y="118" text-anchor="end" font-size="13" fill="#3B82C4" font-weight="bold">Current</text>
+
+  <circle cx="120" cy="40" r="5" fill="#E8902A"/>
+  <text x="132" y="45" font-size="15" fill="#E8902A" font-weight="bold">Vs</text>
+  <text x="152" y="295" font-size="14" fill="#E8902A" font-weight="bold">GND</text>
+
+  <g stroke="#888888" stroke-width="1.5" fill="none">
+    <line x1="300" y1="280" x2="610" y2="280"/>
+    <line x1="300" y1="280" x2="300" y2="50"/>
+  </g>
+  <line x1="300" y1="70" x2="610" y2="70" stroke="#888888" stroke-width="1" stroke-dasharray="4 4"/>
+  <text x="292" y="74" text-anchor="end" font-size="12" fill="#888888">Vs</text>
+  <text x="292" y="284" text-anchor="end" font-size="12" fill="#888888">0</text>
+  <text x="610" y="300" text-anchor="end" font-size="12" fill="#888888">Time</text>
+  <text x="300" y="40" text-anchor="middle" font-size="12" fill="#888888">Capacitor Voltage</text>
+
+  <polyline points="300.0,280.0 302.5,269.8 305.0,260.0 307.5,250.7 310.0,241.9 312.5,233.5 315.0,225.6 317.5,218.0 320.0,210.8 322.5,203.9 325.0,197.4 327.5,191.2 330.0,185.3 332.5,179.6 335.0,174.3 337.5,169.2 340.0,164.4 342.5,159.8 345.0,155.4 347.5,151.2 350.0,147.3 352.5,143.5 355.0,139.9 357.5,136.5 360.0,133.3 362.5,130.2 365.0,127.2 367.5,124.4 370.0,121.8 372.5,119.3 375.0,116.9 377.5,114.6 380.0,112.4 382.5,110.3 385.0,108.4 387.5,106.5 390.0,104.7 392.5,103.0 395.0,101.4 397.5,99.9 400.0,98.4 402.5,97.0 405.0,95.7 407.5,94.5 410.0,93.3 412.5,92.1 415.0,91.1 417.5,90.0 420.0,89.1 422.5,88.1 425.0,87.2 427.5,86.4 430.0,85.6 432.5,84.8 435.0,84.1 437.5,83.4 440.0,82.8 442.5,82.1 445.0,81.6 447.5,81.0 450.0,80.5 452.5,79.9 455.0,79.5 457.5,79.0 460.0,78.6 462.5,78.1 465.0,77.7 467.5,77.4 470.0,77.0 472.5,76.7 475.0,76.3 477.5,76.0 480.0,75.7 482.5,75.5 485.0,75.2 487.5,74.9 490.0,74.7 492.5,74.5 495.0,74.3 497.5,74.0 500.0,73.8 502.5,73.7 505.0,73.5 507.5,73.3 510.0,73.1 512.5,73.0 515.0,72.8 517.5,72.7 520.0,72.6 522.5,72.5 525.0,72.3 527.5,72.2 530.0,72.1 532.5,72.0 535.0,71.9 537.5,71.8 540.0,71.7 542.5,71.6 545.0,71.6 547.5,71.5 550.0,71.4 552.5,71.3 555.0,71.3 557.5,71.2 560.0,71.2 562.5,71.1 565.0,71.0 567.5,71.0 570.0,70.9 572.5,70.9 575.0,70.9 577.5,70.8 580.0,70.8 582.5,70.7 585.0,70.7 587.5,70.7 590.0,70.6 592.5,70.6 595.0,70.6 597.5,70.5 600.0,70.5" fill="none" stroke="#3B82C4" stroke-width="2.5"/>
+
+  <g stroke="#E8902A" stroke-width="1" stroke-dasharray="3 3">
+    <line x1="350" y1="280" x2="350" y2="147.3"/>
+    <line x1="450" y1="280" x2="450" y2="80.5"/>
+    <line x1="550" y1="280" x2="550" y2="71.4"/>
+  </g>
+  <g font-size="12" fill="#E8902A" font-weight="bold" text-anchor="middle">
+    <text x="350" y="300">1τ</text>
+    <text x="450" y="300">3τ</text>
+    <text x="550" y="300">5τ</text>
+    <text x="376" y="170">63%</text>
+    <text x="476" y="108">95%</text>
+    <text x="576" y="98">99%</text>
+  </g>
+
+  <circle cx="350" cy="147.3" r="4" fill="#E8902A"/><circle cx="450" cy="80.5" r="4" fill="#E8902A"/><circle cx="550" cy="71.4" r="4" fill="#E8902A"/>
+  <text x="320" y="345" text-anchor="middle" font-size="14" fill="#888888">τ = R × C</text>
+</svg>
