@@ -79,8 +79,6 @@ A의 신호는 내려갔지만 B가 신호를 올리고 있으므로, 라인은 
 
 내 커널은 IRQ 라인을 공유하지 않고, 다루는 장치 모두 엣지 트리거를 전제로 동작하는 장치라서 PIC를 엣지 트리거로 설정했다.
 
-참고로 NMI(Non-Maskable Interrupt)라는 인터럽트도 있다. PIC를 거치지 않고 CPU의 NMI 핀으로 직접 들어오며, `cli`로도 막을 수 없다. 주로 메모리 오류 같은 치명적인 하드웨어 오류를 알리는 데 쓰인다.
-
 ### PIC Initialization
 
 초기화 코드: [src/kernel/pic.c](https://github.com/zerone015/kfs/blob/master/src/kernel/pic.c#L3)
