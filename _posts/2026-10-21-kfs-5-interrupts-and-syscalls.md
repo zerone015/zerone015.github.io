@@ -240,7 +240,12 @@ _Panic frame of do_panic and isr_panic_
 - **인자:** 순서대로 `ebx`, `ecx`, `edx`, `esi`, `edi`, `ebp`
 - **반환값:** `eax`. 실패하면 음수 에러 코드를 반환한다.
 
-현재 구현된 시스템 콜은 `exit`, `fork`, `waitpid`, `getpid`, `getuid`, `kill`, `signal`, `sigreturn`이고, 시스템 콜 번호도 리눅스 x86과 같다.
+인터럽트 진입 코드는 caller-saved 레지스터만 저장하지만, 시스템 콜 진입 코드는 인자가 담긴 레지스터까지 모두 저장해 `struct ucontext`로 묶어 C 함수에 넘긴다.
+
+![인터럽트와 시스템 콜 진입 시 커널 스택](/assets/img/kfs/kfs-entry-stack.png)
+_Kernel stack after interrupt entry and system call entry_
+
+현재 구현된 시스템 콜은 `exit`, `fork`, `waitpid`, `getpid`, `getuid`, `kill`, `signal`, `sigreturn`이다. 각 시스템 콜의 구현은 7편(Process)과 8편(Signal)에서 자세히 다룬다.
 
 핸들러 코드: [src/kernel/syscall.asm](https://github.com/zerone015/kfs/blob/master/src/kernel/syscall.asm#L18)
 
